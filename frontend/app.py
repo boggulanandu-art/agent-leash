@@ -1,0 +1,877 @@
+import os
+
+import requests
+import streamlit as st
+from dotenv import load_dotenv
+
+load_dotenv()
+
+BASE_URL = os.getenv("AGENT_LEASH_BACKEND_URL", os.getenv("BACKEND_URL", "http://127.0.0.1:8000"))
+
+st.set_page_config(page_title="Agent Leash", page_icon="🛡️", layout="wide")
+
+
+CSS = """
+<style>
+    :root {
+        --bg: #040b14;
+        --bg-2: #091b2d;
+        --panel: rgba(13, 24, 38, 0.9);
+        --panel-strong: rgba(17, 31, 49, 0.96);
+        --panel-soft: rgba(15, 27, 41, 0.8);
+        --line: rgba(121, 162, 255, 0.2);
+        --text: #edf5ff;
+        --muted: #a8bfd8;
+        --accent: #5da7ff;
+        --accent-strong: #2b7ef7;
+        --cyan: #67e8f9;
+        --green: #33d39a;
+        --amber: #f5b451;
+        --red: #ff6b6b;
+        --purple: #9f7aea;
+        --shadow: 0 18px 40px rgba(0,0,0,0.28);
+    }
+    html, body, [data-testid="stAppViewContainer"] {
+        background:
+            radial-gradient(circle at top left, rgba(93, 167, 255, 0.15), transparent 22%),
+            radial-gradient(circle at bottom right, rgba(103, 232, 249, 0.12), transparent 24%),
+            linear-gradient(180deg, var(--bg) 0%, #071722 100%);
+        color: var(--text);
+        font-family: "Segoe UI", Inter, sans-serif;
+    }
+    .block-container {
+        padding-top: 0.8rem;
+        padding-bottom: 1.4rem;
+    }
+    .agent-shell {
+        display: flex;
+        min-height: 100vh;
+        gap: 1.25rem;
+        align-items: flex-start;
+    }
+    .agent-sidebar {
+        width: 250px;
+        background: rgba(8, 18, 31, 0.94);
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        padding: 1rem 0.9rem;
+        box-shadow: var(--shadow);
+        position: sticky;
+        top: 1rem;
+    }
+    .brand-mark {
+        display: flex;
+        align-items: center;
+        gap: 0.7rem;
+        padding: 0.5rem 0.45rem 1rem;
+        border-bottom: 1px solid var(--line);
+        margin-bottom: 1rem;
+    }
+    .brand-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 2.2rem;
+        height: 2.2rem;
+        border-radius: 12px;
+        background: linear-gradient(135deg, rgba(93,167,255,0.18), rgba(103,232,249,0.18));
+        border: 1px solid rgba(103,232,249,0.35);
+        color: var(--cyan);
+        font-size: 1.1rem;
+        font-weight: 800;
+    }
+    .brand-title {
+        font-size: 1.05rem;
+        font-weight: 800;
+        letter-spacing: 0.12em;
+        color: var(--text);
+    }
+    .danger-tag {
+        display: inline-block;
+        padding: 0.2rem 0.6rem;
+        border-radius: 999px;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(255,255,255,0.04);
+        color: var(--muted);
+    }
+    .nav-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        margin-top: 0.8rem;
+    }
+    .nav-item {
+        display: flex;
+        align-items: center;
+        gap: 0.7rem;
+        padding: 0.7rem 0.8rem;
+        border-radius: 12px;
+        color: var(--muted);
+        font-size: 0.92rem;
+        border: 1px solid transparent;
+        background: transparent;
+    }
+    .nav-item.active {
+        background: rgba(93, 167, 255, 0.08);
+        border-color: rgba(93, 167, 255, 0.2);
+        color: var(--text);
+    }
+    .nav-dot {
+        width: 0.45rem;
+        height: 0.45rem;
+        border-radius: 50%;
+        background: var(--accent);
+        box-shadow: 0 0 0 4px rgba(93, 167, 255, 0.12);
+    }
+    .sidebar-card {
+        margin-top: 1.2rem;
+        background: rgba(13, 24, 38, 0.9);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 0.9rem;
+    }
+    .sidebar-card h4 {
+        margin: 0 0 0.7rem 0;
+        font-size: 0.78rem;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+        text-transform: uppercase;
+    }
+    .status-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        background: rgba(51, 211, 154, 0.12);
+        border: 1px solid rgba(51, 211, 154, 0.25);
+        border-radius: 999px;
+        padding: 0.38rem 0.7rem;
+        margin-bottom: 0.6rem;
+        color: #d7f9ec;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+    }
+    .status-pill .dot {
+        width: 0.45rem;
+        height: 0.45rem;
+        border-radius: 50%;
+        background: var(--green);
+        box-shadow: 0 0 0 5px rgba(51, 211, 154, 0.12);
+    }
+    .risk-overview {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 0.8rem;
+        color: var(--muted);
+    }
+    .risk-number {
+        font-size: 1.4rem;
+        font-weight: 800;
+        color: var(--text);
+    }
+    .main-panel {
+        flex: 1;
+        min-width: 0;
+    }
+    .topbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 1rem;
+        background: rgba(10, 20, 32, 0.8);
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        padding: 0.9rem 1.1rem;
+        box-shadow: var(--shadow);
+        margin-bottom: 0.9rem;
+    }
+    .brand-wrap {
+        display: flex;
+        align-items: center;
+        gap: 0.9rem;
+    }
+    .brand-chip {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 2.8rem;
+        height: 2.8rem;
+        border-radius: 16px;
+        background: linear-gradient(135deg, rgba(93,167,255,0.18), rgba(103,232,249,0.18));
+        border: 1px solid rgba(103,232,249,0.35);
+        color: var(--cyan);
+        font-size: 1.2rem;
+        box-shadow: 0 10px 24px rgba(93,167,255,0.12);
+    }
+    .brand-copy {
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+    }
+    .brand-small {
+        display: block;
+        font-size: 0.72rem;
+        color: #edf6ff;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        font-weight: 800;
+        line-height: 1.2;
+        margin-bottom: 0.22rem;
+        white-space: nowrap;
+    }
+    .brand {
+        font-size: clamp(1.4rem, 2vw, 2.15rem);
+        font-weight: 800;
+        letter-spacing: 0.02em;
+        line-height: 1.2;
+        color: var(--text);
+    }
+    .top-subtitle {
+        color: var(--muted);
+        font-size: 0.82rem;
+        margin-top: 0.12rem;
+        line-height: 1.4;
+    }
+    .top-status {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 0.2rem;
+    }
+    .status {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.55rem;
+        background: rgba(51, 211, 154, 0.08);
+        border: 1px solid rgba(51, 211, 154, 0.25);
+        border-radius: 999px;
+        padding: 0.45rem 0.8rem;
+        color: #d7f9ec;
+        font-weight: 700;
+        font-size: 0.8rem;
+    }
+    .dot {
+        width: 0.55rem;
+        height: 0.55rem;
+        border-radius: 50%;
+        background: var(--green);
+        box-shadow: 0 0 0 5px rgba(51, 211, 154, 0.12);
+    }
+    .status-note {
+        color: var(--muted);
+        font-size: 0.74rem;
+    }
+    .card {
+        background: rgba(15, 27, 41, 0.92);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 0.9rem 0.95rem;
+        box-shadow: var(--shadow);
+        height: 100%;
+    }
+    .card h3 {
+        margin: 0 0 0.7rem 0;
+        font-size: 1.02rem;
+        letter-spacing: 0.02em;
+        color: var(--text);
+    }
+    .card-subtitle {
+        color: var(--muted);
+        font-size: 0.78rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        margin-bottom: 0.9rem;
+    }
+    .meta-label {
+        color: var(--muted);
+        font-size: 0.73rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        margin-bottom: 0.25rem;
+    }
+    .meta-value {
+        margin-bottom: 0.8rem;
+        font-size: 0.97rem;
+        line-height: 1.6;
+        color: var(--text);
+    }
+    .pill {
+        display: inline-block;
+        padding: 0.28rem 0.6rem;
+        border-radius: 999px;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        margin-right: 0.45rem;
+        margin-bottom: 0.45rem;
+    }
+    .pill-allow { background: rgba(51, 211, 154, 0.14); color: #dffef5; border: 1px solid rgba(51, 211, 154, 0.3); }
+    .pill-ask { background: rgba(245, 180, 81, 0.14); color: #ffe9b8; border: 1px solid rgba(245, 180, 81, 0.3); }
+    .pill-block { background: rgba(255, 107, 107, 0.14); color: #ffd1d1; border: 1px solid rgba(255, 107, 107, 0.3); }
+    .decision-box {
+        border-radius: 18px;
+        padding: 1rem 1.1rem;
+        border: 1px solid var(--line);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        min-height: 160px;
+        margin-bottom: 0.8rem;
+    }
+    .decision-box.allow { background: rgba(51, 211, 154, 0.08); border-color: rgba(51, 211, 154, 0.35); }
+    .decision-box.ask { background: rgba(245, 180, 81, 0.08); border-color: rgba(245, 180, 81, 0.3); }
+    .decision-box.block { background: rgba(255, 107, 107, 0.08); border-color: rgba(255, 107, 107, 0.3); }
+    .decision-text {
+        font-size: 2.5rem;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        margin-top: 0.3rem;
+    }
+    .decision-box.allow .decision-text { color: var(--green); }
+    .decision-box.ask .decision-text { color: var(--amber); }
+    .decision-box.block .decision-text { color: var(--red); }
+    .risk-bar {
+        width: 100%;
+        height: 0.5rem;
+        border-radius: 999px;
+        background: rgba(255,255,255,0.06);
+        overflow: hidden;
+        margin: 0.45rem 0 0.7rem;
+        border: 1px solid rgba(255,255,255,0.04);
+    }
+    .risk-bar > span {
+        display: block;
+        height: 100%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, var(--green), var(--amber), var(--red));
+    }
+    .scenario-grid {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 1rem;
+        margin-top: 1.2rem;
+    }
+    .scenario-card {
+        border-radius: 16px;
+        border: 1px solid var(--line);
+        background: linear-gradient(180deg, rgba(17,33,48,0.96), rgba(12,20,31,0.96));
+        padding: 1rem;
+        height: 100%;
+        box-shadow: var(--shadow);
+    }
+    .scenario-icon {
+        font-size: 1.4rem;
+        margin-bottom: 0.5rem;
+    }
+    .scenario-name {
+        font-weight: 700;
+        font-size: 1rem;
+        margin-bottom: 0.45rem;
+        color: var(--text);
+    }
+    .scenario-desc {
+        color: var(--muted);
+        font-size: 0.84rem;
+        min-height: 76px;
+        line-height: 1.5;
+        margin-bottom: 0.9rem;
+    }
+    .stButton > button {
+        width: 100%;
+        background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
+        color: white;
+        border-radius: 10px;
+        border: none;
+        font-weight: 700;
+        padding: 0.62rem 0.9rem;
+        box-shadow: 0 8px 20px rgba(43, 126, 247, 0.25);
+    }
+    .stButton > button:hover { filter: brightness(1.08); }
+    .approval-box, .payment-box {
+        background: rgba(76, 141, 255, 0.08);
+        border: 1px solid rgba(76, 141, 255, 0.25);
+        border-radius: 16px;
+        padding: 1rem 1.1rem;
+        margin-top: 1.2rem;
+    }
+    .success-box {
+        background: rgba(51, 211, 154, 0.08);
+        border: 1px solid rgba(51, 211, 154, 0.25);
+        border-radius: 16px;
+        padding: 1rem 1.1rem;
+        margin-top: 1.2rem;
+    }
+    .error-box {
+        background: rgba(255, 107, 107, 0.08);
+        color: #ffd3d3;
+        border: 1px solid rgba(255, 107, 107, 0.25);
+        border-radius: 14px;
+        padding: 0.9rem 1rem;
+        margin-top: 1rem;
+    }
+    .footer-note {
+        margin-top: 1.8rem;
+        padding-top: 1.1rem;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 0.8rem;
+        line-height: 1.7;
+        text-align: center;
+    }
+    .muted { color: var(--muted); }
+    .section-spacer { margin-top: 0.7rem; }
+    @media (max-width: 1200px) {
+        .scenario-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+    }
+    @media (max-width: 900px) {
+        .agent-shell {
+            display: block;
+        }
+        .agent-sidebar {
+            width: 100%;
+            position: static;
+            margin-bottom: 1rem;
+        }
+        .scenario-grid {
+            grid-template-columns: 1fr;
+        }
+        .topbar {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+        .top-status {
+            align-items: flex-start;
+        }
+    }
+</style>
+"""
+
+st.markdown(CSS, unsafe_allow_html=True)
+
+
+def fetch_json(url: str):
+    response = requests.get(url, timeout=10)
+    response.raise_for_status()
+    return response.json()
+
+
+def post_json(url: str, payload=None):
+    response = requests.post(url, json=payload, timeout=15)
+    response.raise_for_status()
+    return response.json()
+
+
+def render_value(label: str, value):
+    st.markdown(f"<div class='meta-label'>{label}</div>", unsafe_allow_html=True)
+    if value is None:
+        st.markdown("<div class='meta-value muted'>Not specified</div>", unsafe_allow_html=True)
+    elif isinstance(value, list):
+        if value:
+            st.markdown(
+                "<div class='meta-value'>" + "<br>".join(f"• {item}" for item in value) + "</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown("<div class='meta-value muted'>None</div>", unsafe_allow_html=True)
+    else:
+        st.markdown(f"<div class='meta-value'>{value}</div>", unsafe_allow_html=True)
+
+
+def render_policy_badge(decision: str):
+    decision = str(decision).upper()
+    if decision == "ALLOW":
+        return "pill pill-allow"
+    if decision == "ASK":
+        return "pill pill-ask"
+    return "pill pill-block"
+
+
+def render_status_band():
+    result = st.session_state.get("result") or {}
+    decision = result.get("policy_decision", {}) if isinstance(result, dict) else {}
+    decision_name = str(decision.get("decision", "")).upper()
+
+    if decision_name == "ALLOW":
+        risk_label = "LOW RISK"
+    elif decision_name == "BLOCK":
+        risk_label = "HIGH RISK"
+    elif decision_name == "ASK":
+        risk_label = "REVIEW REQUIRED"
+    else:
+        risk_label = "AWAITING DECISION"
+
+    st.sidebar.markdown(
+        """
+        <div class="agent-sidebar">
+            <div class="brand-mark">
+                <div class="brand-icon">🛡️</div>
+                <div class="brand-title">AGENT LEASH</div>
+            </div>
+            <div class="nav-stack">
+                <div class="nav-item active"><span class="nav-dot"></span>Dashboard</div>
+            </div>
+            <div class="sidebar-card">
+                <h4>System Status</h4>
+                <div class="status-pill"><span class="dot"></span>ACTIVE</div>
+            </div>
+            <div class="sidebar-card">
+                <h4>Policy Enforcement</h4>
+                <div class="status-pill"><span class="dot"></span>ON</div>
+            </div>
+            <div class="sidebar-card">
+                <h4>Current Risk</h4>
+                <div class="risk-overview"><span>Risk</span><span class="risk-number">{risk_label}</span></div>
+            </div>
+        </div>
+        """.format(risk_label=risk_label),
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        """
+        <div style="background: rgba(10, 20, 32, 0.82); border: 1px solid rgba(121, 162, 255, 0.2); border-radius: 18px; padding: 2.1rem 1.15rem 1.4rem 1.15rem; margin: 0.55rem 0 0.8rem 0; box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18);">
+            <div style="display:flex; align-items:center; gap:0.5rem; color:#edf6ff; font-size:1.2rem; letter-spacing:0.12em; text-transform:uppercase; font-weight:800; margin:0 0 0.45rem 0; line-height:1.3;">
+                <span style="font-size:1.2rem; line-height:1;">🛡️</span>
+                <span>AGENT LEASH</span>
+            </div>
+            <div style="font-size:2.15rem; line-height:1.2; font-weight:800; color:#edf6ff; margin:0 0 0.2rem 0; letter-spacing:0.02em;">AI Transaction Security Layer</div>
+            <div style="font-size:1rem; color:#a8bfd8; line-height:1.45; margin:0;">Security layer for AI-powered transactions</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+
+def scenario_cards():
+    try:
+        scenarios = fetch_json(f"{BASE_URL}/demo/scenarios")
+    except requests.RequestException:
+        return []
+
+    return scenarios
+
+
+def render_user_intent(intent):
+    with st.container():
+        st.markdown("<div class='card'>", unsafe_allow_html=True)
+        st.markdown("<h3>👤 User Authorization</h3>", unsafe_allow_html=True)
+        if intent:
+            cols = st.columns(2)
+            fields = [
+                ("User instruction", intent.get("instruction")),
+                ("Maximum authorized amount", intent.get("max_amount")),
+                ("Allowed categories", intent.get("allowed_categories")),
+                ("Allowed colors", intent.get("allowed_colors")),
+                ("Allowed sizes", intent.get("allowed_sizes")),
+                ("Subscription permission", intent.get("allow_subscription")),
+                ("Add-on permission", intent.get("allow_addons")),
+                ("Daily limit", intent.get("daily_limit")),
+                ("Session limit", intent.get("session_limit")),
+            ]
+            for index, (label, value) in enumerate(fields):
+                with cols[index % 2]:
+                    render_value(label, value)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_proposed_transaction(tx):
+    with st.container():
+        st.markdown("<div class='card'>", unsafe_allow_html=True)
+        st.markdown("<h3>🤖 AI Proposed Transaction</h3>", unsafe_allow_html=True)
+        if tx:
+            render_value("Merchant", tx.get("merchant_id"))
+            total = tx.get("total_amount")
+            if total is not None:
+                st.markdown("<div class='meta-label'>Total amount</div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='meta-value'>{total}</div>", unsafe_allow_html=True)
+
+            items = tx.get("items", [])
+            if items:
+                for index, item in enumerate(items, 1):
+                    st.markdown(f"<div class='meta-label'>Item {index}</div>", unsafe_allow_html=True)
+                    st.markdown(
+                        f"<div class='meta-value'><strong>{item.get('product_name')}</strong><br>"
+                        f"Qty: {item.get('quantity')} | Unit price: {item.get('unit_price')} | Category: {item.get('category')}<br>"
+                        f"Color: {item.get('color')} | Size: {item.get('size')}<br>"
+                        f"Subscription: {item.get('is_subscription')} | Add-on: {item.get('is_addon')}</div>",
+                        unsafe_allow_html=True,
+                    )
+        st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_policy_decision(decision):
+    with st.container():
+        st.markdown("<div class='card'>", unsafe_allow_html=True)
+        st.markdown("<h3>🛡️ AGENT LEASH DECISION</h3>", unsafe_allow_html=True)
+        if decision:
+            badge = str(decision.get("decision", "")).upper()
+            st.markdown(
+                f"<div class='decision-box {badge.lower() if badge in ('ALLOW', 'ASK', 'BLOCK') else 'allow'}'>"
+                f"<div class='meta-label'>Decision</div><div class='decision-text'>{badge}</div></div>",
+                unsafe_allow_html=True,
+            )
+            st.markdown(f"<div class='meta-label'>Risk Score</div><div class='meta-value'>{decision.get('risk_score')}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='meta-label'>Human Confirmation</div><div class='meta-value'>{decision.get('requires_human_confirmation')}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='meta-label'>Violated Rules</div>", unsafe_allow_html=True)
+            if decision.get("violated_rules"):
+                st.markdown("<div class='meta-value'>" + "<br>".join(f"• {rule}" for rule in decision.get("violated_rules", [])) + "</div>", unsafe_allow_html=True)
+            else:
+                st.markdown("<div class='meta-value muted'>None</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='meta-label'>Policy Reasons</div>", unsafe_allow_html=True)
+            reasons = decision.get("reasons", [])
+            if reasons:
+                st.markdown("<div class='meta-value'>" + "<br>".join(f"• {reason}" for reason in reasons) + "</div>", unsafe_allow_html=True)
+            else:
+                st.markdown("<div class='meta-value muted'>No policy reasons provided.</div>", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_human_review(tx, decision):
+    if not tx or not decision:
+        return
+    if str(decision.get("decision", "")).upper() != "ASK":
+        return
+    if not decision.get("requires_human_confirmation"):
+        return
+
+    decision_transaction_id = str(decision.get("transaction_id") or tx.get("transaction_id") or "").strip()
+    if not decision_transaction_id:
+        render_error("No valid transaction ID is available for human review. Please re-run the scenario.")
+        return
+
+    st.markdown("<div class='section-spacer'></div>", unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div style="background: rgba(76, 141, 255, 0.10); border: 1px solid rgba(76, 141, 255, 0.35); border-radius: 16px; padding: 1rem 1.1rem; color: #eaf3ff;">
+            <div style="font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: #b7d0ff; margin-bottom: 0.35rem;">Human Review Required</div>
+            <div style="font-size: 1.2rem; font-weight: 700; margin-bottom: 0.5rem;">Transaction requires manual review</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    with st.form("approval_form"):
+        row = st.columns(2)
+        with row[0]:
+            st.text_input("Reviewer name", key="reviewer_name")
+        with row[1]:
+            st.text_input("Transaction ID", value=decision_transaction_id, disabled=True)
+
+        st.text_area("Policy reasons", value="\n".join(decision.get("reasons", [])) or "No policy reasons provided.", disabled=True, height=120)
+        st.text_area("Optional note", key="approval_note", placeholder="Add reviewer note")
+
+        st.write(f"Total amount: {tx.get('total_amount')}")
+        st.write(f"Risk score: {decision.get('risk_score')}")
+
+        col_approve, col_reject = st.columns(2)
+        with col_approve:
+            approve_clicked = st.form_submit_button("APPROVE TRANSACTION", use_container_width=True)
+        with col_reject:
+            reject_clicked = st.form_submit_button("REJECT TRANSACTION", use_container_width=True)
+
+        if approve_clicked or reject_clicked:
+            reviewer = st.session_state.get("reviewer_name", "").strip()
+            if not reviewer:
+                render_error("Reviewer name is required.")
+            else:
+                payload = {
+                    "transaction_id": decision_transaction_id,
+                    "original_decision": "ASK",
+                    "human_decision": "APPROVE" if approve_clicked else "REJECT",
+                    "reviewer": reviewer,
+                    "note": st.session_state.get("approval_note", "").strip() or None,
+                }
+                try:
+                    response = post_json(f"{BASE_URL}/approval", payload)
+                    if response.get("human_decision") == "APPROVE":
+                        st.session_state.approval_state = "APPROVED"
+                        st.success("Approval recorded")
+                    else:
+                        st.session_state.approval_state = "REJECTED"
+                        st.error("Transaction rejected")
+                except requests.RequestException as exc:
+                    render_error(f"Approval request failed: {exc}")
+
+
+def render_error(message: str):
+    st.markdown(f"<div class='error-box'>{message}</div>", unsafe_allow_html=True)
+
+
+def render_payment_flow(tx, decision):
+    if not tx or not decision:
+        return
+
+    if "error" in decision:
+        return
+
+    decision_name = str(decision.get("decision", "")).upper()
+    transaction_id = str(decision.get("transaction_id") or tx.get("transaction_id") or "").strip()
+
+    if not transaction_id:
+        render_error("No valid transaction ID is available. Razorpay order creation cannot proceed.")
+        return
+
+    if decision_name == "BLOCK":
+        st.markdown("<div class='section-spacer'></div>", unsafe_allow_html=True)
+        st.markdown(
+            """
+            <div style="background: rgba(239, 90, 90, 0.10); border: 1px solid rgba(239, 90, 90, 0.25); border-radius: 16px; padding: 1rem 1.1rem; color: #eaf3ff;">
+                <div style="font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: #ffc3c3; margin-bottom: 0.35rem;">Transaction Blocked</div>
+                <div style="font-size: 1.2rem; font-weight: 700; margin-bottom: 0.5rem;">No payment order can be created.</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        return
+
+    if decision_name == "ASK":
+        if st.session_state.get("approval_state") == "APPROVED":
+            st.markdown("<div class='section-spacer'></div>", unsafe_allow_html=True)
+            st.markdown(
+                """
+                <div style="background: rgba(32, 201, 151, 0.10); border: 1px solid rgba(32, 201, 151, 0.25); border-radius: 16px; padding: 1rem 1.1rem; color: #eaf3ff;">
+                    <div style="font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: #bff9df; margin-bottom: 0.35rem;">Approved — Payment Ready</div>
+                    <div style="font-size: 1.2rem; font-weight: 700; margin-bottom: 0.5rem;">Create Razorpay TEST Order</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        elif st.session_state.get("approval_state") == "REJECTED":
+            st.markdown("<div class='section-spacer'></div>", unsafe_allow_html=True)
+            st.markdown(
+                """
+                <div style="background: rgba(239, 90, 90, 0.10); border: 1px solid rgba(239, 90, 90, 0.25); border-radius: 16px; padding: 1rem 1.1rem; color: #eaf3ff;">
+                    <div style="font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: #ffc3c3; margin-bottom: 0.35rem;">Transaction Rejected</div>
+                    <div style="font-size: 1.2rem; font-weight: 700; margin-bottom: 0.5rem;">A payment order will not be created.</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            return
+        else:
+            st.markdown("<div class='section-spacer'></div>", unsafe_allow_html=True)
+            st.markdown(
+                """
+                <div style="background: rgba(244, 185, 66, 0.10); border: 1px solid rgba(244, 185, 66, 0.25); border-radius: 16px; padding: 1rem 1.1rem; color: #eaf3ff;">
+                    <div style="font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: #ffe7ad; margin-bottom: 0.35rem;">Human Confirmation Required</div>
+                    <div style="font-size: 1.2rem; font-weight: 700; margin-bottom: 0.5rem;">Approval is required before a payment order can be created.</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            return
+
+    if decision_name == "ALLOW":
+        st.markdown("<div class='section-spacer'></div>", unsafe_allow_html=True)
+        st.markdown(
+            """
+            <div style="background: rgba(32, 201, 151, 0.10); border: 1px solid rgba(32, 201, 151, 0.25); border-radius: 16px; padding: 1rem 1.1rem; color: #eaf3ff;">
+                <div style="font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: #bff9df; margin-bottom: 0.35rem;">Payment Ready</div>
+                <div style="font-size: 1.2rem; font-weight: 700; margin-bottom: 0.5rem;">Create Razorpay TEST Order</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    if st.button("Create Test Payment", key=f"payment_{transaction_id}"):
+        try:
+            response = post_json(f"{BASE_URL}/transactions/{transaction_id}/order")
+            st.session_state.payment_order = response
+        except requests.RequestException as exc:
+            render_error(f"Order creation failed: {exc}")
+            st.session_state.payment_order = {"error": str(exc)}
+
+    if st.session_state.get("payment_order"):
+        order = st.session_state["payment_order"]
+        if "error" not in order:
+            st.markdown("<div class='section-spacer'></div>", unsafe_allow_html=True)
+            st.markdown(
+                """
+                <div style="background: rgba(76, 141, 255, 0.10); border: 1px solid rgba(76, 141, 255, 0.35); border-radius: 16px; padding: 1rem 1.1rem; color: #eaf3ff;">
+                    <div style="font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: #b7d0ff; margin-bottom: 0.35rem;">Razorpay TEST Order Created</div>
+                    <div style="font-size: 1.2rem; font-weight: 700; margin-bottom: 0.5rem;">Order is ready for test-mode payment steps.</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.write(f"Order ID: {order.get('razorpay_order_id')}")
+            st.write(f"Amount: {order.get('amount')}")
+            st.write(f"Currency: {order.get('currency')}")
+            st.write(f"Status: {order.get('status')}")
+
+
+render_status_band()
+
+scenarios = scenario_cards()
+scenario_list = scenarios if scenarios else [
+    {"name": "SAFE_PURCHASE", "description": "A fully authorized purchase that matches the user's budget, category, and size constraints.", "icon": "✅"},
+    {"name": "UNAUTHORIZED_ADDON", "description": "The base product is allowed, but the AI adds an unauthorized warranty or accessory add-on.", "icon": "🧩"},
+    {"name": "UNAUTHORIZED_SUBSCRIPTION", "description": "The AI adds a subscription or recurring fee that the user did not authorize.", "icon": "💳"},
+    {"name": "OVER_LIMIT", "description": "The AI proposes a cart that exceeds the user's maximum authorized spend.", "icon": "⚠️"},
+    {"name": "AGGREGATE_SPLIT", "description": "Two or more separate reasonable charges are combined to exceed the user's daily or session limit.", "icon": "🔗"},
+]
+
+if "result" not in st.session_state:
+    st.session_state.result = None
+
+if not scenario_list:
+    render_error("Unable to load demo scenarios from the backend.")
+else:
+    st.markdown("<div class='card-subtitle' style='margin-top: 1.2rem;'>DEMO SCENARIOS</div>", unsafe_allow_html=True)
+    scenario_icons = {"SAFE_PURCHASE": "✅", "UNAUTHORIZED_ADDON": "🧩", "UNAUTHORIZED_SUBSCRIPTION": "💳", "OVER_LIMIT": "⚠️", "AGGREGATE_SPLIT": "🔗"}
+    scenario_cols = st.columns(len(scenario_list))
+    for idx, scenario in enumerate(scenario_list):
+        with scenario_cols[idx]:
+            st.markdown(
+                f"""
+                <div class='scenario-card'>
+                    <div class='scenario-icon'>{scenario.get('icon', scenario_icons.get(scenario['name'], '🧪'))}</div>
+                    <div class='scenario-name'>{scenario['name']}</div>
+                    <div class='scenario-desc'>{scenario.get('description', '')}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            if st.button("Run Scenario", key=f"run_scenario_{scenario['name']}_{idx}", use_container_width=True):
+                try:
+                    payload = post_json(f"{BASE_URL}/demo/scenarios/{scenario['name']}")
+                    st.session_state.result = payload
+                except requests.RequestException as exc:
+                    st.session_state.result = {"error": f"API request failed: {exc}"}
+
+if st.session_state.result:
+    if "error" in st.session_state.result:
+        render_error(st.session_state.result["error"])
+    else:
+        intent = st.session_state.result.get("user_intent", {})
+        tx = st.session_state.result.get("proposed_transaction", {})
+        decision = st.session_state.result.get("policy_decision", {})
+
+        st.markdown("<div class='section-spacer'></div>", unsafe_allow_html=True)
+        col_user, col_tx, col_decision = st.columns([1.15, 1.15, 1])
+        with col_user:
+            render_user_intent(intent)
+        with col_tx:
+            render_proposed_transaction(tx)
+        with col_decision:
+            render_policy_decision(decision)
+
+        render_human_review(tx, decision)
+        render_payment_flow(tx, decision)
+
+st.markdown(
+    "<div class='footer-note'>"
+    "Agent Leash ensures AI agents follow user instructions, prevent unauthorized spending, and keep every transaction transparent and secure."
+    "</div>",
+    unsafe_allow_html=True,
+)
