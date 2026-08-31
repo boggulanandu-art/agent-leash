@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 
 from .agent_simulator import SimulatedBuyer
+from .ai_buyer import AIBuyer
 from .ai_parser import AIParser
 from .database import AuditDatabase
 from .models import ApprovalRecord, PolicyDecision, ProposedTransaction, UserIntent
@@ -24,11 +25,43 @@ database = AuditDatabase()
 razorpay_service = RazorpayService()
 simulator = SimulatedBuyer()
 parser: AIParser | None = None
+ai_buyer: AIBuyer | None = None
+
+AI_BUYER_CATALOG = [
+    {
+        "product_id": "black-running-shoes-size-9",
+        "product_name": "Black Running Shoes",
+        "unit_price": 2799,
+        "currency": "INR",
+        "merchant_id": "merchant-demo",
+        "category": "footwear",
+        "color": "black",
+        "size": "9",
+        "is_subscription": False,
+        "is_addon": False,
+    },
+    {
+        "product_id": "blue-running-shoes-size-9",
+        "product_name": "Blue Running Shoes",
+        "unit_price": 2899,
+        "currency": "INR",
+        "merchant_id": "merchant-demo",
+        "category": "footwear",
+        "color": "blue",
+        "size": "9",
+        "is_subscription": False,
+        "is_addon": False,
+    },
+]
 
 
 class HealthResponse(BaseModel):
     status: str
     service: str
+
+
+class AgentBuyRequest(BaseModel):
+    instruction: str
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -63,6 +96,54 @@ def parse_intent(instruction: str) -> UserIntent:
         api_key = os.getenv("GEMINI_API_KEY")
         parser = AIParser(api_key=api_key)
     return parser.parse(instruction)
+
+
+@app.post("/agent/buy")
+def agent_buy(payload: AgentBuyRequest) -> dict:
+    """Parse an instruction, select one catalog product, and evaluate it."""
+    if not payload.instruction.strip():
+        raise HTTPException(status_code=400, detail="Instruction cannot be empty.")
+
+    global parser, ai_buyer
+    try:
+        if parser is None:
+            parser = AIParser(api_key=os.getenv("GEMINI_API_KEY"))
+        user_intent = parser.parse(payload.instruction)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Intent parsing failed: {exc}") from exc
+
+    try:
+        if ai_buyer is None:
+            ai_buyer = AIBuyer(api_key=os.getenv("GEMINI_API_KEY"))
+        proposal = ai_buyer.propose_transaction(user_intent, AI_BUYER_CATALOG)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"AI Buyer failed: {exc}") from exc
+
+    try:
+        decision = policy_engine.evaluate(user_intent, proposal)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Policy evaluation failed: {exc}") from exc
+
+    proposal.transaction_id = decision.transaction_id
+    database.log_decision(
+        transaction_id=decision.transaction_id,
+        user_id=proposal.user_id,
+        decision=decision.decision,
+        reason=decision.reason,
+        risk_score=decision.risk_score,
+        total_amount=proposal.total_amount,
+        currency=proposal.currency,
+    )
+    return {
+        "user_intent": user_intent.model_dump(mode="json"),
+        "ai_buyer_proposal": proposal.model_dump(mode="json"),
+        "decision": decision.decision,
+        "risk_score": decision.risk_score,
+        "violated_rules": decision.violated_rules,
+        "policy_reasons": decision.reasons,
+        "transaction_id": decision.transaction_id,
+        "payment_ready": decision.decision == "ALLOW",
+    }
 
 
 @app.post("/approval")
