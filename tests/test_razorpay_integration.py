@@ -193,6 +193,56 @@ class TestRazorpayIntegration(unittest.TestCase):
         self.assertEqual(response.json()["transaction_id"], transaction_id)
         self.assertEqual(response.json()["status"], "created")
 
+    def test_ask_payment_blocked_before_approval(self):
+        transaction_id = "tx-ask-pending"
+        self._record_decision(transaction_id, "ASK")
+
+        response = self.client.post(f"/transactions/{transaction_id}/order")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("approval", response.json()["detail"].lower())
+        main.razorpay_service.client.order.create.assert_not_called()
+
+    def test_allow_payment_allowed(self):
+        transaction_id = "tx-allow-regression"
+        self._record_decision(transaction_id, "ALLOW")
+        main.razorpay_service.client.order.create.return_value = {
+            "id": "order_allow_regression",
+            "entity": "order",
+            "amount": 279900,
+            "currency": "INR",
+            "status": "created",
+            "receipt": f"txn_{transaction_id}",
+        }
+
+        response = self.client.post(f"/transactions/{transaction_id}/order")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["policy_decision"], "ALLOW")
+        self.assertEqual(response.json()["status"], "created")
+        main.razorpay_service.client.order.create.assert_called_once()
+
+    def test_block_payment_blocked(self):
+        transaction_id = "tx-block-regression"
+        self._record_decision(transaction_id, "BLOCK")
+
+        response = self.client.post(f"/transactions/{transaction_id}/order")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("blocked", response.json()["detail"].lower())
+        main.razorpay_service.client.order.create.assert_not_called()
+
+    def test_ask_reject_keeps_payment_blocked(self):
+        transaction_id = "tx-ask-reject-regression"
+        self._record_decision(transaction_id, "ASK")
+        self._reject(transaction_id)
+
+        response = self.client.post(f"/transactions/{transaction_id}/order")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("approval", response.json()["detail"].lower())
+        main.razorpay_service.client.order.create.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

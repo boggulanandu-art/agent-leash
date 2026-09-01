@@ -144,6 +144,68 @@ class AuditDatabase:
             "timestamp": row[5],
         }
 
+    def list_audit_records(self) -> list[dict]:
+        rows = self.conn.execute(
+            """
+            SELECT
+                audit.created_at,
+                audit.transaction_id,
+                audit.decision,
+                audit.risk_score,
+                audit.reason,
+                approval.human_decision,
+                approval.reviewer,
+                approval.note,
+                approval.timestamp,
+                order_record.razorpay_order_id,
+                order_record.status,
+                order_record.timestamp
+            FROM audit_logs AS audit
+            LEFT JOIN approvals AS approval
+                ON approval.id = (
+                    SELECT latest_approval.id
+                    FROM approvals AS latest_approval
+                    WHERE latest_approval.transaction_id = audit.transaction_id
+                    ORDER BY latest_approval.id DESC
+                    LIMIT 1
+                )
+            LEFT JOIN razorpay_orders AS order_record
+                ON order_record.id = (
+                    SELECT latest_order.id
+                    FROM razorpay_orders AS latest_order
+                    WHERE latest_order.transaction_id = audit.transaction_id
+                    ORDER BY latest_order.id DESC
+                    LIMIT 1
+                )
+                AND (
+                    audit.decision <> 'ASK'
+                    OR (
+                        approval.human_decision = 'APPROVE'
+                        AND approval.original_decision = 'ASK'
+                    )
+                )
+            ORDER BY audit.id DESC
+            """
+        ).fetchall()
+
+        return [
+            {
+                "timestamp": row[0],
+                "transaction_id": row[1],
+                "decision": row[2],
+                "risk_score": row[3],
+                "policy_reason": row[4],
+                "human_decision": row[5],
+                "reviewer": row[6],
+                "approval_note": row[7],
+                "approval_timestamp": row[8],
+                "razorpay_order_id": row[9],
+                "payment_status": row[10],
+                "payment_timestamp": row[11],
+            }
+            for row in rows
+        ]
+
     def save_razorpay_order(
         self,
         transaction_id: str,

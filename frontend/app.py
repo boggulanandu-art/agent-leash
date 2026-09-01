@@ -561,6 +561,41 @@ def scenario_cards():
     return scenarios
 
 
+def audit_records():
+    try:
+        return fetch_json(f"{BASE_URL}/audit")
+    except requests.RequestException:
+        return None
+
+
+def render_audit_trail(records):
+    st.markdown("<div class='card-subtitle' style='margin-top: 1.2rem;'>AUDIT TRAIL</div>", unsafe_allow_html=True)
+    if records is None:
+        render_error("Unable to load the audit trail from the backend.")
+        return
+    if not records:
+        st.markdown("<div class='meta-value muted'>No audit records yet.</div>", unsafe_allow_html=True)
+        return
+
+    for record in records:
+        decision = str(record.get("decision", "")).upper()
+        approval = record.get("human_decision") or "Not reviewed"
+        payment = record.get("payment_status") or "No order created"
+        st.markdown(
+            "<div class='card' style='margin-bottom: 0.7rem;'>"
+            f"<div class='meta-label'>Timestamp</div><div class='meta-value'>{record.get('timestamp') or 'Not available'}</div>"
+            f"<div class='meta-label'>Transaction</div><div class='meta-value'>{record.get('transaction_id') or 'Not available'}</div>"
+            f"<div class='meta-label'>Decision / Risk</div><div class='meta-value'><strong>{decision or 'Not available'}</strong> / {record.get('risk_score')}</div>"
+            f"<div class='meta-label'>Policy reason</div><div class='meta-value'>{record.get('policy_reason') or 'None'}</div>"
+            f"<div class='meta-label'>Human review</div><div class='meta-value'>{approval}"
+            f"{f' by {record.get("reviewer")}' if record.get('reviewer') else ''}</div>"
+            f"<div class='meta-label'>Payment / order status</div><div class='meta-value'>{payment}"
+            f"{f' ({record.get("razorpay_order_id")})' if record.get('razorpay_order_id') else ''}</div>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+
 def render_user_intent(intent):
     with st.container():
         st.markdown("<div class='card'>", unsafe_allow_html=True)
@@ -707,6 +742,69 @@ def render_error(message: str):
     st.markdown(f"<div class='error-box'>{message}</div>", unsafe_allow_html=True)
 
 
+def render_ai_buyer_section():
+    st.markdown("<div class='card-subtitle' style='margin-top: 1.2rem;'>🤖 AI BUYER</div>", unsafe_allow_html=True)
+    instruction = st.text_area(
+        "User instruction",
+        value="Buy black running shoes, size 9, under ₹3000. No extras.",
+        key="ai_buyer_instruction",
+        height=90,
+    )
+
+    if st.button("Analyze & Propose Purchase", key="analyze_ai_buyer", use_container_width=True):
+        if not instruction.strip():
+            st.session_state.ai_buyer_result = {"error": "Instruction cannot be empty."}
+        else:
+            st.session_state.approval_state = None
+            st.session_state.payment_order = None
+            try:
+                st.session_state.ai_buyer_result = post_json(
+                    f"{BASE_URL}/agent/buy",
+                    {"instruction": instruction},
+                )
+            except requests.RequestException as exc:
+                detail = getattr(getattr(exc, "response", None), "json", lambda: {})()
+                message = detail.get("detail") if isinstance(detail, dict) else None
+                st.session_state.ai_buyer_result = {"error": message or f"AI Buyer request failed: {exc}"}
+
+    result = st.session_state.get("ai_buyer_result")
+    if not result:
+        return
+    if "error" in result:
+        render_error(result["error"])
+        return
+
+    intent = result.get("user_intent", {})
+    tx = result.get("ai_buyer_proposal", {})
+    decision_name = str(result.get("decision", "")).upper()
+    decision = {
+        "decision": decision_name,
+        "risk_score": result.get("risk_score"),
+        "violated_rules": result.get("violated_rules", []),
+        "reasons": result.get("policy_reasons", []),
+        "transaction_id": result.get("transaction_id"),
+        "requires_human_confirmation": decision_name == "ASK",
+    }
+
+    col_user, col_tx, col_decision = st.columns([1.15, 1.15, 1])
+    with col_user:
+        render_user_intent(intent)
+    with col_tx:
+        render_proposed_transaction(tx)
+    with col_decision:
+        render_policy_decision(decision)
+
+    if decision_name == "ALLOW":
+        st.success("ALLOW: eligible for the existing Razorpay TEST payment flow.")
+    elif decision_name == "BLOCK":
+        st.error("BLOCK: payment cannot proceed.")
+    elif decision_name == "ASK":
+        st.warning("ASK — Human confirmation required")
+
+    render_human_review(tx, decision)
+    render_payment_flow(tx, decision)
+
+
 def render_payment_flow(tx, decision):
     if not tx or not decision:
         return
@@ -811,6 +909,38 @@ def render_payment_flow(tx, decision):
 
 
 render_status_band()
+render_ai_buyer_section()
+
+st.markdown("<div class='card-subtitle' style='margin-top: 1.2rem;'>ASK DEMONSTRATION</div>", unsafe_allow_html=True)
+if st.button("Run ASK Demo", key="run_ask_demo", use_container_width=True):
+    st.session_state.approval_state = None
+    st.session_state.payment_order = None
+    try:
+        st.session_state.ask_demo_result = post_json(f"{BASE_URL}/demo/ask")
+    except requests.RequestException as exc:
+        st.session_state.ask_demo_result = {"error": f"ASK demo request failed: {exc}"}
+
+ask_demo_result = st.session_state.get("ask_demo_result")
+if ask_demo_result:
+    if "error" in ask_demo_result:
+        render_error(ask_demo_result["error"])
+    else:
+        ask_intent = ask_demo_result.get("user_intent", {})
+        ask_tx = ask_demo_result.get("proposed_transaction", {})
+        ask_decision = ask_demo_result.get("policy_decision", {})
+        ask_columns = st.columns([1.15, 1.15, 1])
+        with ask_columns[0]:
+            render_user_intent(ask_intent)
+        with ask_columns[1]:
+            render_proposed_transaction(ask_tx)
+        with ask_columns[2]:
+            render_policy_decision(ask_decision)
+        if str(ask_decision.get("decision", "")).upper() == "ASK":
+            st.warning("ASK — Human confirmation required")
+        render_human_review(ask_tx, ask_decision)
+        render_payment_flow(ask_tx, ask_decision)
+
+    render_audit_trail(audit_records())
 
 scenarios = scenario_cards()
 scenario_list = scenarios if scenarios else [

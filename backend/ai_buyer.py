@@ -32,7 +32,7 @@ class AIBuyer:
         import google.generativeai as genai
 
         genai.configure(api_key=key)
-        self.model = genai.GenerativeModel("gemini-2.0-flash")
+        self.model = genai.GenerativeModel("gemini-3.6-flash")
 
     @staticmethod
     def _validate_catalog(catalog: Sequence[Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -68,8 +68,13 @@ class AIBuyer:
                 if product_id in products:
                     raise ValueError(f"Duplicate catalog product_id: {product_id}")
 
-                CartItem.model_validate({key: value for key, value in raw_product.items() if key != "product_id"})
-                products[product_id] = dict(raw_product)
+                normalized = dict(raw_product)
+                normalized["color"] = raw_product.get("color")
+                normalized["size"] = raw_product.get("size")
+                normalized["is_subscription"] = bool(raw_product.get("is_subscription", False))
+                normalized["is_addon"] = bool(raw_product.get("is_addon", False))
+                CartItem.model_validate({key: value for key, value in normalized.items() if key != "product_id"})
+                products[product_id] = normalized
         except (TypeError, ValidationError) as exc:
             raise ValueError(f"Invalid catalog data: {exc}") from exc
 
@@ -85,14 +90,19 @@ class AIBuyer:
         catalog_for_prompt = [{"product_id": product_id, **product} for product_id, product in products.items()]
         prompt = f"""You are an AI shopping buyer. Select exactly one product from the supplied catalog for the user's request.
 
+Security rules:
+- You may only return a product_id that exactly matches one of the catalog entries below.
+- You must NOT invent, change, or control any catalog value such as price, merchant, category, color, size, subscription status, or add-on status.
+- Return ONLY JSON with exactly this shape: {{"product_id": "<one existing catalog product_id>"}}.
+- Do not return multiple products, extra fields, or a product_id outside the catalog.
+
 User authorization:
 {json.dumps(user_intent.model_dump(mode="json"), sort_keys=True)}
 
 Authoritative catalog:
 {json.dumps(catalog_for_prompt, sort_keys=True)}
 
-Return ONLY JSON with exactly this shape: {{"product_id": "<one existing catalog product_id>"}}.
-Never invent or change any catalog value. Do not return multiple products."""
+Choose the single best matching product_id from the catalog."""
 
         try:
             response = self.model.generate_content(

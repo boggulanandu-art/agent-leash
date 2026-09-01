@@ -29,7 +29,7 @@ ai_buyer: AIBuyer | None = None
 
 AI_BUYER_CATALOG = [
     {
-        "product_id": "black-running-shoes-size-9",
+        "product_id": "black-running-shoes",
         "product_name": "Black Running Shoes",
         "unit_price": 2799,
         "currency": "INR",
@@ -41,14 +41,50 @@ AI_BUYER_CATALOG = [
         "is_addon": False,
     },
     {
-        "product_id": "blue-running-shoes-size-9",
-        "product_name": "Blue Running Shoes",
-        "unit_price": 2899,
+        "product_id": "blue-backpack",
+        "product_name": "Blue Backpack",
+        "unit_price": 1499,
         "currency": "INR",
         "merchant_id": "merchant-demo",
-        "category": "footwear",
+        "category": "backpack",
         "color": "blue",
-        "size": "9",
+        "size": None,
+        "is_subscription": False,
+        "is_addon": False,
+    },
+    {
+        "product_id": "wireless-headphones",
+        "product_name": "Wireless Headphones",
+        "unit_price": 2499,
+        "currency": "INR",
+        "merchant_id": "merchant-demo",
+        "category": "electronics",
+        "color": None,
+        "size": None,
+        "is_subscription": False,
+        "is_addon": False,
+    },
+    {
+        "product_id": "smartwatch",
+        "product_name": "Smartwatch",
+        "unit_price": 3999,
+        "currency": "INR",
+        "merchant_id": "merchant-demo",
+        "category": "electronics",
+        "color": None,
+        "size": None,
+        "is_subscription": False,
+        "is_addon": False,
+    },
+    {
+        "product_id": "laptop",
+        "product_name": "Laptop",
+        "unit_price": 45000,
+        "currency": "INR",
+        "merchant_id": "merchant-demo",
+        "category": "electronics",
+        "color": None,
+        "size": None,
         "is_subscription": False,
         "is_addon": False,
     },
@@ -185,7 +221,7 @@ def create_transaction_order(transaction_id: str) -> dict:
         raise HTTPException(status_code=403, detail="Transaction is blocked; Razorpay order creation is not allowed.")
     if decision_name == "ASK":
         approval = database.get_latest_approval_for_transaction(transaction_id)
-        if approval is None or approval.get("human_decision") != "APPROVE":
+        if approval is None or str(approval.get("human_decision", "")).upper() != "APPROVE":
             raise HTTPException(status_code=403, detail="Human approval is required before creating a Razorpay order.")
 
     amount = float(decision.get("total_amount") or 0.0)
@@ -224,6 +260,11 @@ def create_transaction_order(transaction_id: str) -> dict:
 @app.get("/")
 def root() -> dict:
     return {"message": "Agent Leash backend is running."}
+
+
+@app.get("/audit")
+def audit_trail() -> list[dict]:
+    return database.list_audit_records()
 
 
 def _demo_user_intent_for(scenario_name: str) -> UserIntent:
@@ -324,6 +365,47 @@ def _demo_user_intent_for(scenario_name: str) -> UserIntent:
 @app.get("/demo/scenarios")
 def demo_scenarios() -> list[dict]:
     return simulator.scenario_list()
+
+
+@app.post("/demo/ask")
+def demo_ask_evaluation() -> dict:
+    """Evaluate a valid demo purchase above its human-review threshold."""
+    user_intent = UserIntent(
+        instruction="Buy black running shoes, size 9, under ₹3000. Human confirmation required for this transaction.",
+        product_name="Black Running Shoes",
+        max_amount=3000,
+        currency="INR",
+        categories=["footwear"],
+        allowed_categories=["footwear"],
+        allowed_colors=["black"],
+        allowed_sizes=["9"],
+        allow_subscription=False,
+        allow_addons=False,
+        daily_limit=5000,
+        session_limit=5000,
+        review_threshold=2500,
+        previous_approved_amounts=[],
+    )
+    global ai_buyer
+    if ai_buyer is None:
+        ai_buyer = AIBuyer(api_key=os.getenv("GEMINI_API_KEY"))
+    proposed_transaction = ai_buyer.propose_transaction(user_intent, [AI_BUYER_CATALOG[0]])
+    decision = policy_engine.evaluate(user_intent, proposed_transaction)
+    proposed_transaction.transaction_id = decision.transaction_id
+    database.log_decision(
+        transaction_id=decision.transaction_id,
+        user_id=proposed_transaction.user_id,
+        decision=decision.decision,
+        reason=decision.reason,
+        risk_score=decision.risk_score,
+        total_amount=proposed_transaction.total_amount,
+        currency=proposed_transaction.currency,
+    )
+    return {
+        "user_intent": user_intent.model_dump(mode="json"),
+        "proposed_transaction": proposed_transaction.model_dump(mode="json"),
+        "policy_decision": decision.model_dump(mode="json"),
+    }
 
 
 @app.post("/demo/scenarios/{scenario_name}")

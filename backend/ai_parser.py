@@ -10,6 +10,20 @@ from .models import UserIntent
 
 _MISSING = object()
 
+_CANONICAL_CATEGORY_ALIASES = {
+    "shoe": "footwear",
+    "shoes": "footwear",
+    "running shoe": "footwear",
+    "running shoes": "footwear",
+}
+
+
+def _canonicalize_categories(categories: list[str]) -> list[str]:
+    return [
+        _CANONICAL_CATEGORY_ALIASES.get(category.strip().lower(), category.strip())
+        for category in categories
+    ]
+
 
 class AIParser:
     """Converts natural-language shopping instructions into structured UserIntent using Gemini API."""
@@ -40,7 +54,7 @@ class AIParser:
             # Lazy-load google.generativeai to allow mocking in tests
             import google.generativeai as genai
             genai.configure(api_key=key)
-            self.model = genai.GenerativeModel("gemini-2.0-flash")
+            self.model = genai.GenerativeModel("gemini-3.6-flash")
 
     def parse(self, instruction: str) -> UserIntent:
         """Convert natural-language purchase request into a structured UserIntent.
@@ -62,11 +76,11 @@ class AIParser:
         schema = {
             "type": "object",
             "properties": {
-                "product_name": {"type": ["string", "null"], "description": "Product name or type being requested"},
-                "brand": {"type": ["string", "null"], "description": "Brand name if specified"},
-                "color": {"type": ["string", "null"], "description": "Preferred color"},
-                "size": {"type": ["string", "null"], "description": "Preferred size"},
-                "max_amount": {"type": ["number", "null"], "description": "Maximum price in the stated currency"},
+                "product_name": {"type": "string", "nullable": True, "description": "Product name or type being requested"},
+                "brand": {"type": "string", "nullable": True, "description": "Brand name if specified"},
+                "color": {"type": "string", "nullable": True, "description": "Preferred color"},
+                "size": {"type": "string", "nullable": True, "description": "Preferred size"},
+                "max_amount": {"type": "number", "nullable": True, "description": "Maximum price in the stated currency"},
                 "currency": {"type": "string", "description": "Currency code (default INR)"},
                 "categories": {
                     "type": "array",
@@ -100,9 +114,9 @@ class AIParser:
                     "items": {"type": "string"},
                     "description": "Blocked merchant names or IDs",
                 },
-                "daily_limit": {"type": ["number", "null"], "description": "Daily spending limit"},
-                "session_limit": {"type": ["number", "null"], "description": "Session spending limit"},
-                "review_threshold": {"type": ["number", "null"], "description": "Amount threshold requiring human review"},
+                "daily_limit": {"type": "number", "nullable": True, "description": "Daily spending limit"},
+                "session_limit": {"type": "number", "nullable": True, "description": "Session spending limit"},
+                "review_threshold": {"type": "number", "nullable": True, "description": "Amount threshold requiring human review"},
             },
             "required": [
                 "product_name",
@@ -182,8 +196,8 @@ Return ONLY valid JSON, no other text."""
                 max_price=parsed_data.get("max_amount"),
                 max_amount=parsed_data.get("max_amount"),
                 currency=parsed_data.get("currency", "INR"),
-                categories=parsed_data.get("categories", []),
-                allowed_categories=parsed_data.get("allowed_categories", []),
+                categories=_canonicalize_categories(parsed_data.get("categories", [])),
+                allowed_categories=_canonicalize_categories(parsed_data.get("allowed_categories", [])),
                 allowed_colors=parsed_data.get("allowed_colors", []),
                 allowed_sizes=parsed_data.get("allowed_sizes", []),
                 allow_subscription=parsed_data.get("allow_subscription", False),

@@ -138,6 +138,24 @@ class TestAgentBuyEndpoint(unittest.TestCase):
         self.assertEqual(payload["proposed_transaction"]["total_amount"], 2799)
         self.assertEqual(payload["proposed_transaction"]["notes"], "simulated demo transaction")
 
+    def test_authoritative_catalog_contains_expected_products(self):
+        product_ids = [product["product_id"] for product in main.AI_BUYER_CATALOG]
+        self.assertEqual(
+            sorted(product_ids),
+            sorted([
+                "black-running-shoes",
+                "blue-backpack",
+                "wireless-headphones",
+                "smartwatch",
+                "laptop",
+            ]),
+        )
+        for product in main.AI_BUYER_CATALOG:
+            self.assertEqual(product["merchant_id"], "merchant-demo")
+            self.assertEqual(product["currency"], "INR")
+            self.assertFalse(product["is_subscription"])
+            self.assertFalse(product["is_addon"])
+
 
 if __name__ == "__main__":
     unittest.main()
