@@ -25,6 +25,7 @@ class AuditDatabase:
             CREATE TABLE IF NOT EXISTS audit_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 transaction_id TEXT,
+                idempotency_key TEXT,
                 user_id TEXT NOT NULL,
                 decision TEXT NOT NULL,
                 reason TEXT NOT NULL,
@@ -65,6 +66,10 @@ class AuditDatabase:
             self.conn.execute("ALTER TABLE audit_logs ADD COLUMN transaction_id TEXT")
         except sqlite3.OperationalError:
             pass
+        try:
+            self.conn.execute("ALTER TABLE audit_logs ADD COLUMN idempotency_key TEXT")
+        except sqlite3.OperationalError:
+            pass
         self.conn.commit()
 
     def log_decision(
@@ -76,13 +81,37 @@ class AuditDatabase:
         total_amount: float,
         currency: str,
         transaction_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> dict:
+        if idempotency_key:
+            existing = self.conn.execute(
+                """
+                SELECT id, transaction_id, user_id, decision, reason, risk_score, total_amount, currency
+                FROM audit_logs
+                WHERE idempotency_key = ?
+                ORDER BY id ASC
+                LIMIT 1
+                """,
+                (idempotency_key,),
+            ).fetchone()
+            if existing is not None:
+                return {
+                    "id": existing[0],
+                    "transaction_id": existing[1],
+                    "user_id": existing[2],
+                    "decision": existing[3],
+                    "reason": existing[4],
+                    "risk_score": existing[5],
+                    "total_amount": existing[6],
+                    "currency": existing[7],
+                }
+
         cursor = self.conn.execute(
             """
-            INSERT INTO audit_logs (transaction_id, user_id, decision, reason, risk_score, total_amount, currency)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO audit_logs (transaction_id, idempotency_key, user_id, decision, reason, risk_score, total_amount, currency)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (transaction_id, user_id, decision, reason, risk_score, total_amount, currency),
+            (transaction_id, idempotency_key, user_id, decision, reason, risk_score, total_amount, currency),
         )
         self.conn.commit()
         record_id = cursor.lastrowid
@@ -166,6 +195,11 @@ class AuditDatabase:
                     SELECT latest_approval.id
                     FROM approvals AS latest_approval
                     WHERE latest_approval.transaction_id = audit.transaction_id
+                      AND (
+                          SELECT COUNT(*)
+                          FROM audit_logs AS same_transaction
+                          WHERE same_transaction.transaction_id = audit.transaction_id
+                      ) = 1
                     ORDER BY latest_approval.id DESC
                     LIMIT 1
                 )
@@ -174,6 +208,11 @@ class AuditDatabase:
                     SELECT latest_order.id
                     FROM razorpay_orders AS latest_order
                     WHERE latest_order.transaction_id = audit.transaction_id
+                                            AND (
+                                                    SELECT COUNT(*)
+                                                    FROM audit_logs AS same_transaction
+                                                    WHERE same_transaction.transaction_id = audit.transaction_id
+                                            ) = 1
                     ORDER BY latest_order.id DESC
                     LIMIT 1
                 )

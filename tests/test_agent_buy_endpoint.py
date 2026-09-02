@@ -87,6 +87,29 @@ class TestAgentBuyEndpoint(unittest.TestCase):
         main.ai_buyer.propose_transaction.assert_called_once()
         main.razorpay_service.assert_not_called()
 
+    def test_repeated_request_id_does_not_duplicate_audit_entry(self):
+        self.configure_success()
+        request = {"instruction": self.intent.instruction, "request_id": "retry-1"}
+
+        first = self.client.post("/agent/buy", json=request)
+        second = self.client.post("/agent/buy", json=request)
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(first.json()["transaction_id"], second.json()["transaction_id"])
+        self.assertEqual(len(self.client.get("/audit").json()), 1)
+
+    def test_separate_requests_get_separate_audit_transaction_ids(self):
+        self.configure_success()
+
+        first = self.client.post("/agent/buy", json={"instruction": self.intent.instruction})
+        second = self.client.post("/agent/buy", json={"instruction": self.intent.instruction})
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertNotEqual(first.json()["transaction_id"], second.json()["transaction_id"])
+        self.assertEqual(len(self.client.get("/audit").json()), 2)
+
     def test_policy_violation_returns_block(self):
         self.configure_success(self.make_transaction(price=2799, is_addon=True))
 
@@ -115,6 +138,25 @@ class TestAgentBuyEndpoint(unittest.TestCase):
         self.assertEqual(response.status_code, 502)
         self.assertIn("Intent parsing failed", response.json()["detail"])
         main.ai_buyer.propose_transaction.assert_not_called()
+
+    def test_parser_quota_failure_returns_service_unavailable(self):
+        main.parser.parse.side_effect = ValueError("Gemini API quota temporarily unavailable. Please try again later.")
+
+        response = self.client.post("/agent/buy", json={"instruction": self.intent.instruction})
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("quota", response.json()["detail"].lower())
+        main.ai_buyer.propose_transaction.assert_not_called()
+
+    def test_ai_buyer_failure_never_creates_payment_order(self):
+        main.parser.parse.return_value = self.intent
+        main.ai_buyer.propose_transaction.side_effect = ValueError("Gemini API request failed. Please try again later.")
+
+        response = self.client.post("/agent/buy", json={"instruction": self.intent.instruction})
+
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("AI Buyer failed", response.json()["detail"])
+        main.razorpay_service.create_test_order.assert_not_called()
 
     def test_agent_buy_never_calls_razorpay(self):
         self.configure_success()

@@ -1,5 +1,6 @@
 import os
-
+import uuid
+import re
 import requests
 import streamlit as st
 from dotenv import load_dotenv
@@ -126,6 +127,31 @@ CSS = """
         border-radius: 50%;
         background: var(--accent);
         box-shadow: 0 0 0 4px rgba(93, 167, 255, 0.12);
+    }
+    [data-testid="stSidebar"] [data-testid="stRadio"] {
+        padding: 0.1rem 0;
+    }
+    [data-testid="stSidebar"] [data-testid="stRadio"] label {
+        color: var(--muted) !important;
+        background: transparent;
+        border: 1px solid transparent;
+        border-radius: 12px;
+        padding: 0.68rem 0.75rem;
+        margin: 0.12rem 0;
+        font-size: 0.92rem;
+        transition: background 0.15s ease, border-color 0.15s ease;
+    }
+    [data-testid="stSidebar"] [data-testid="stRadio"] label:hover {
+        background: rgba(93, 167, 255, 0.08);
+        border-color: rgba(93, 167, 255, 0.2);
+    }
+    [data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked) {
+        color: var(--text) !important;
+        background: rgba(93, 167, 255, 0.08);
+        border-color: rgba(93, 167, 255, 0.2);
+    }
+    [data-testid="stSidebar"] [data-testid="stRadio"] [data-testid="stMarkdownContainer"] p {
+        margin: 0;
     }
     .sidebar-card {
         margin-top: 1.2rem;
@@ -470,6 +496,18 @@ def post_json(url: str, payload=None):
     return response.json()
 
 
+def new_request_id() -> str:
+    return str(uuid.uuid4())
+
+
+def stable_request_id(state_key: str, logical_input=None) -> str:
+    input_key = f"{state_key}_input"
+    if st.session_state.get(input_key) != logical_input:
+        st.session_state[input_key] = logical_input
+        st.session_state[state_key] = new_request_id()
+    return st.session_state[state_key]
+
+
 def render_value(label: str, value):
     st.markdown(f"<div class='meta-label'>{label}</div>", unsafe_allow_html=True)
     if value is None:
@@ -495,9 +533,48 @@ def render_policy_badge(decision: str):
     return "pill pill-block"
 
 
+def unique_reasons(reasons):
+    return list(dict.fromkeys(str(reason) for reason in reasons if reason))
+
+
+def format_policy_reason(reason):
+    """Make internal paise values user-friendly without changing policy logic."""
+    text = str(reason)
+
+    def replace_paise(match):
+        paise = int(match.group(1))
+        if paise % 100 == 0:
+            return f"₹{paise / 100:.0f}"
+        return f"₹{paise / 100:.2f}"
+
+    return re.sub(r"(?<![\\d.])(\\d+)\\s+paise\\b", replace_paise, text)
+
+
+def risk_label_for_result(result):
+    if not isinstance(result, dict):
+        return "AWAITING DECISION"
+    decision = result.get("policy_decision", result)
+    decision_name = str(decision.get("decision", "")).upper() if isinstance(decision, dict) else ""
+    if decision_name == "ALLOW":
+        return "LOW RISK"
+    if decision_name == "BLOCK":
+        return "HIGH RISK"
+    if decision_name == "ASK":
+        return "REVIEW REQUIRED"
+    return "AWAITING DECISION"
+
+
+def latest_evaluation_result():
+    for state_key in ("latest_evaluation_result", "ai_buyer_result", "ask_demo_result", "result"):
+        result = st.session_state.get(state_key)
+        if isinstance(result, dict) and "error" not in result:
+            return result
+    return None
+
+
 def render_status_band():
-    result = st.session_state.get("result") or {}
-    decision = result.get("policy_decision", {}) if isinstance(result, dict) else {}
+    result = latest_evaluation_result() or {}
+    decision = result.get("policy_decision", result) if isinstance(result, dict) else {}
     decision_name = str(decision.get("decision", "")).upper()
 
     if decision_name == "ALLOW":
@@ -568,6 +645,38 @@ def audit_records():
         return None
 
 
+def compact_audit_records(records):
+    compacted = []
+    seen_transaction_ids = set()
+    for record in records:
+        transaction_id = record.get("transaction_id")
+        if transaction_id and transaction_id in seen_transaction_ids:
+            continue
+        if transaction_id:
+            seen_transaction_ids.add(transaction_id)
+        compacted.append(record)
+    return compacted
+
+
+def render_audit_record(record):
+    decision = str(record.get("decision", "")).upper()
+    approval = record.get("human_decision") or "Not reviewed"
+    payment = record.get("payment_status") or "No order created"
+    st.markdown(
+        "<div class='card' style='margin-bottom: 0.7rem;'>"
+        f"<div class='meta-label'>Timestamp</div><div class='meta-value'>{record.get('timestamp') or 'Not available'}</div>"
+        f"<div class='meta-label'>Transaction</div><div class='meta-value'>{record.get('transaction_id') or 'Not available'}</div>"
+        f"<div class='meta-label'>Decision / Risk</div><div class='meta-value'><strong>{decision or 'Not available'}</strong> / {record.get('risk_score')}</div>"
+        f"<div class='meta-label'>Policy reason</div><div class='meta-value'>{record.get('policy_reason') or 'None'}</div>"
+        f"<div class='meta-label'>Human review</div><div class='meta-value'>{approval}"
+        f"{f' by {record.get("reviewer")}' if record.get('reviewer') else ''}</div>"
+        f"<div class='meta-label'>Payment / order status</div><div class='meta-value'>{payment}"
+        f"{f' ({record.get("razorpay_order_id")})' if record.get('razorpay_order_id') else ''}</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def render_audit_trail(records):
     st.markdown("<div class='card-subtitle' style='margin-top: 1.2rem;'>AUDIT TRAIL</div>", unsafe_allow_html=True)
     if records is None:
@@ -577,23 +686,15 @@ def render_audit_trail(records):
         st.markdown("<div class='meta-value muted'>No audit records yet.</div>", unsafe_allow_html=True)
         return
 
-    for record in records:
-        decision = str(record.get("decision", "")).upper()
-        approval = record.get("human_decision") or "Not reviewed"
-        payment = record.get("payment_status") or "No order created"
-        st.markdown(
-            "<div class='card' style='margin-bottom: 0.7rem;'>"
-            f"<div class='meta-label'>Timestamp</div><div class='meta-value'>{record.get('timestamp') or 'Not available'}</div>"
-            f"<div class='meta-label'>Transaction</div><div class='meta-value'>{record.get('transaction_id') or 'Not available'}</div>"
-            f"<div class='meta-label'>Decision / Risk</div><div class='meta-value'><strong>{decision or 'Not available'}</strong> / {record.get('risk_score')}</div>"
-            f"<div class='meta-label'>Policy reason</div><div class='meta-value'>{record.get('policy_reason') or 'None'}</div>"
-            f"<div class='meta-label'>Human review</div><div class='meta-value'>{approval}"
-            f"{f' by {record.get("reviewer")}' if record.get('reviewer') else ''}</div>"
-            f"<div class='meta-label'>Payment / order status</div><div class='meta-value'>{payment}"
-            f"{f' ({record.get("razorpay_order_id")})' if record.get('razorpay_order_id') else ''}</div>"
-            "</div>",
-            unsafe_allow_html=True,
-        )
+    compacted_records = compact_audit_records(records)
+    visible_records = compacted_records[:4]
+    for record in visible_records:
+        render_audit_record(record)
+
+    if len(compacted_records) > len(visible_records) or len(records) > len(visible_records):
+        with st.expander(f"View full history ({len(records)} records)"):
+            for record in records:
+                render_audit_record(record)
 
 
 def render_user_intent(intent):
@@ -663,9 +764,10 @@ def render_policy_decision(decision):
             else:
                 st.markdown("<div class='meta-value muted'>None</div>", unsafe_allow_html=True)
             st.markdown(f"<div class='meta-label'>Policy Reasons</div>", unsafe_allow_html=True)
-            reasons = decision.get("reasons", [])
+            reasons = unique_reasons(decision.get("reasons", []))
             if reasons:
-                st.markdown("<div class='meta-value'>" + "<br>".join(f"• {reason}" for reason in reasons) + "</div>", unsafe_allow_html=True)
+                display_reasons = [format_policy_reason(reason) for reason in reasons]
+                st.markdown("<div class='meta-value'>" + "<br>".join(f"• {reason}" for reason in display_reasons) + "</div>", unsafe_allow_html=True)
             else:
                 st.markdown("<div class='meta-value muted'>No policy reasons provided.</div>", unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
@@ -702,7 +804,6 @@ def render_human_review(tx, decision):
         with row[1]:
             st.text_input("Transaction ID", value=decision_transaction_id, disabled=True)
 
-        st.text_area("Policy reasons", value="\n".join(decision.get("reasons", [])) or "No policy reasons provided.", disabled=True, height=120)
         st.text_area("Optional note", key="approval_note", placeholder="Add reviewer note")
 
         st.write(f"Total amount: {tx.get('total_amount')}")
@@ -758,14 +859,17 @@ def render_ai_buyer_section():
             st.session_state.approval_state = None
             st.session_state.payment_order = None
             try:
-                st.session_state.ai_buyer_result = post_json(
+                payload = post_json(
                     f"{BASE_URL}/agent/buy",
-                    {"instruction": instruction},
+                    {
+                        "instruction": instruction,
+                        "request_id": stable_request_id("ai_buyer_request_id", instruction),
+                    },
                 )
-            except requests.RequestException as exc:
-                detail = getattr(getattr(exc, "response", None), "json", lambda: {})()
-                message = detail.get("detail") if isinstance(detail, dict) else None
-                st.session_state.ai_buyer_result = {"error": message or f"AI Buyer request failed: {exc}"}
+                st.session_state.ai_buyer_result = payload
+                st.session_state.latest_evaluation_result = payload
+            except requests.RequestException:
+                st.session_state.ai_buyer_result = {"error": "AI service temporarily unavailable. Please try again later."}
 
     result = st.session_state.get("ai_buyer_result")
     if not result:
@@ -798,14 +902,11 @@ def render_ai_buyer_section():
         st.success("ALLOW: eligible for the existing Razorpay TEST payment flow.")
     elif decision_name == "BLOCK":
         st.error("BLOCK: payment cannot proceed.")
-    elif decision_name == "ASK":
-        st.warning("ASK — Human confirmation required")
-
     render_human_review(tx, decision)
-    render_payment_flow(tx, decision)
+    render_payment_flow(tx, decision, "ai_buyer")
 
 
-def render_payment_flow(tx, decision):
+def render_payment_flow(tx, decision, ui_instance):
     if not tx or not decision:
         return
 
@@ -881,7 +982,7 @@ def render_payment_flow(tx, decision):
             unsafe_allow_html=True,
         )
 
-    if st.button("Create Test Payment", key=f"payment_{transaction_id}"):
+    if st.button("Create Test Payment", key=f"payment_{ui_instance}_{transaction_id}"):
         try:
             response = post_json(f"{BASE_URL}/transactions/{transaction_id}/order")
             st.session_state.payment_order = response
@@ -908,55 +1009,134 @@ def render_payment_flow(tx, decision):
             st.write(f"Status: {order.get('status')}")
 
 
-render_status_band()
-render_ai_buyer_section()
 
-st.markdown("<div class='card-subtitle' style='margin-top: 1.2rem;'>ASK DEMONSTRATION</div>", unsafe_allow_html=True)
-if st.button("Run ASK Demo", key="run_ask_demo", use_container_width=True):
-    st.session_state.approval_state = None
-    st.session_state.payment_order = None
-    try:
-        st.session_state.ask_demo_result = post_json(f"{BASE_URL}/demo/ask")
-    except requests.RequestException as exc:
-        st.session_state.ask_demo_result = {"error": f"ASK demo request failed: {exc}"}
+def render_page_header(title=None, subtitle=None):
+    title = title or "AI Transaction Security Layer"
+    subtitle = subtitle or "Security layer for AI-powered transactions"
+    st.markdown(
+        f"""
+        <div style="background: rgba(10, 20, 32, 0.82); border: 1px solid rgba(121, 162, 255, 0.2); border-radius: 18px; padding: 1.6rem 1.15rem 1.25rem 1.15rem; margin: 0.55rem 0 1rem 0; box-shadow: 0 12px 28px rgba(0,0,0,0.18);">
+            <div style="display:flex; align-items:center; gap:0.5rem; color:#edf6ff; font-size:1.1rem; letter-spacing:0.12em; text-transform:uppercase; font-weight:800; margin-bottom:0.35rem;">
+                <span>🛡️</span><span>AGENT LEASH</span>
+            </div>
+            <div style="font-size:2rem; line-height:1.2; font-weight:800; color:#edf6ff;">{title}</div>
+            <div style="font-size:0.95rem; color:#a8bfd8; line-height:1.45; margin-top:0.2rem;">{subtitle}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-ask_demo_result = st.session_state.get("ask_demo_result")
-if ask_demo_result:
-    if "error" in ask_demo_result:
-        render_error(ask_demo_result["error"])
-    else:
-        ask_intent = ask_demo_result.get("user_intent", {})
-        ask_tx = ask_demo_result.get("proposed_transaction", {})
-        ask_decision = ask_demo_result.get("policy_decision", {})
-        ask_columns = st.columns([1.15, 1.15, 1])
-        with ask_columns[0]:
-            render_user_intent(ask_intent)
-        with ask_columns[1]:
-            render_proposed_transaction(ask_tx)
-        with ask_columns[2]:
-            render_policy_decision(ask_decision)
-        if str(ask_decision.get("decision", "")).upper() == "ASK":
-            st.warning("ASK — Human confirmation required")
-        render_human_review(ask_tx, ask_decision)
-        render_payment_flow(ask_tx, ask_decision)
 
-    render_audit_trail(audit_records())
+def render_sidebar_navigation():
+    result = latest_evaluation_result() or {}
+    decision = result.get("policy_decision", result) if isinstance(result, dict) else {}
+    decision_name = str(decision.get("decision", "")).upper() if isinstance(decision, dict) else ""
+    risk_label = {
+        "ALLOW": "LOW RISK",
+        "BLOCK": "HIGH RISK",
+        "ASK": "REVIEW REQUIRED",
+    }.get(decision_name, "AWAITING DECISION")
 
-scenarios = scenario_cards()
-scenario_list = scenarios if scenarios else [
-    {"name": "SAFE_PURCHASE", "description": "A fully authorized purchase that matches the user's budget, category, and size constraints.", "icon": "✅"},
-    {"name": "UNAUTHORIZED_ADDON", "description": "The base product is allowed, but the AI adds an unauthorized warranty or accessory add-on.", "icon": "🧩"},
-    {"name": "UNAUTHORIZED_SUBSCRIPTION", "description": "The AI adds a subscription or recurring fee that the user did not authorize.", "icon": "💳"},
-    {"name": "OVER_LIMIT", "description": "The AI proposes a cart that exceeds the user's maximum authorized spend.", "icon": "⚠️"},
-    {"name": "AGGREGATE_SPLIT", "description": "Two or more separate reasonable charges are combined to exceed the user's daily or session limit.", "icon": "🔗"},
-]
+    st.sidebar.markdown(
+        """
+        <div class="brand-mark" style="margin-bottom:0.7rem;">
+            <div class="brand-icon">🛡️</div>
+            <div class="brand-title">AGENT LEASH</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-if "result" not in st.session_state:
-    st.session_state.result = None
+    page = st.sidebar.radio(
+        "Navigation",
+        ["Dashboard Status", "Policy Enforcement", "Current Risk", "Audit Trail", "Demo / Testing"],
+        key="agent_leash_page",
+        label_visibility="collapsed",
+    )
 
-if not scenario_list:
-    render_error("Unable to load demo scenarios from the backend.")
-else:
+    st.sidebar.markdown(
+        f"""
+        <div class="sidebar-card">
+            <h4>System Status</h4>
+            <div class="status-pill"><span class="dot"></span>ACTIVE</div>
+        </div>
+        <div class="sidebar-card">
+            <h4>Current Risk</h4>
+            <div class="risk-overview"><span>Risk</span><span class="risk-number">{risk_label}</span></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    return page
+
+
+def render_transaction_result(result, ui_instance="transaction"):
+    if not result:
+        return
+    if "error" in result:
+        render_error(result["error"])
+        return
+    intent = result.get("user_intent", {})
+    tx = result.get("proposed_transaction") or result.get("ai_buyer_proposal", {})
+    decision = result.get("policy_decision", {})
+    if not decision and result.get("decision"):
+        decision_name = str(result.get("decision", "")).upper()
+        decision = {
+            "decision": decision_name,
+            "risk_score": result.get("risk_score"),
+            "violated_rules": result.get("violated_rules", []),
+            "reasons": result.get("policy_reasons", []),
+            "transaction_id": result.get("transaction_id"),
+            "requires_human_confirmation": decision_name == "ASK",
+        }
+    columns = st.columns([1.15, 1.15, 1])
+    with columns[0]:
+        render_user_intent(intent)
+    with columns[1]:
+        render_proposed_transaction(tx)
+    with columns[2]:
+        render_policy_decision(decision)
+    render_human_review(tx, decision)
+    render_payment_flow(tx, decision, ui_instance)
+
+
+def render_ask_demo():
+    st.markdown("<div class='card-subtitle' style='margin-top: 1.2rem;'>ASK DEMONSTRATION</div>", unsafe_allow_html=True)
+    if st.button("Run ASK Demo", key="run_ask_demo", use_container_width=True):
+        st.session_state.approval_state = None
+        st.session_state.payment_order = None
+        try:
+            payload = post_json(
+                f"{BASE_URL}/demo/ask",
+                {"request_id": stable_request_id("ask_demo_request_id", "ASK_DEMO")},
+            )
+            st.session_state.ask_demo_result = payload
+            st.session_state.latest_evaluation_result = payload
+        except requests.RequestException as exc:
+            st.session_state.ask_demo_result = {"error": f"ASK demo request failed: {exc}"}
+
+    ask_demo_result = st.session_state.get("ask_demo_result")
+    if ask_demo_result:
+        render_transaction_result(ask_demo_result, "ask_demo")
+
+
+def get_scenario_list():
+    scenarios = scenario_cards()
+    return scenarios if scenarios else [
+        {"name": "SAFE_PURCHASE", "description": "A fully authorized purchase that matches the user's budget, category, and size constraints.", "icon": "✅"},
+        {"name": "UNAUTHORIZED_ADDON", "description": "The base product is allowed, but the AI adds an unauthorized warranty or accessory add-on.", "icon": "🧩"},
+        {"name": "UNAUTHORIZED_SUBSCRIPTION", "description": "The AI adds a subscription or recurring fee that the user did not authorize.", "icon": "💳"},
+        {"name": "OVER_LIMIT", "description": "The AI proposes a cart that exceeds the user's maximum authorized spend.", "icon": "⚠️"},
+        {"name": "AGGREGATE_SPLIT", "description": "Two or more separate reasonable charges are combined to exceed the user's daily or session limit.", "icon": "🔗"},
+    ]
+
+
+def render_demo_scenarios():
+    scenario_list = get_scenario_list()
+    if not scenario_list:
+        render_error("Unable to load demo scenarios from the backend.")
+        return
+
     st.markdown("<div class='card-subtitle' style='margin-top: 1.2rem;'>DEMO SCENARIOS</div>", unsafe_allow_html=True)
     scenario_icons = {"SAFE_PURCHASE": "✅", "UNAUTHORIZED_ADDON": "🧩", "UNAUTHORIZED_SUBSCRIPTION": "💳", "OVER_LIMIT": "⚠️", "AGGREGATE_SPLIT": "🔗"}
     scenario_cols = st.columns(len(scenario_list))
@@ -974,30 +1154,80 @@ else:
             )
             if st.button("Run Scenario", key=f"run_scenario_{scenario['name']}_{idx}", use_container_width=True):
                 try:
-                    payload = post_json(f"{BASE_URL}/demo/scenarios/{scenario['name']}")
+                    payload = post_json(
+                        f"{BASE_URL}/demo/scenarios/{scenario['name']}",
+                        {"request_id": stable_request_id(f"scenario_request_id_{scenario['name']}", scenario["name"])},
+                    )
                     st.session_state.result = payload
+                    st.session_state.latest_evaluation_result = payload
                 except requests.RequestException as exc:
                     st.session_state.result = {"error": f"API request failed: {exc}"}
 
-if st.session_state.result:
-    if "error" in st.session_state.result:
-        render_error(st.session_state.result["error"])
-    else:
-        intent = st.session_state.result.get("user_intent", {})
-        tx = st.session_state.result.get("proposed_transaction", {})
-        decision = st.session_state.result.get("policy_decision", {})
+    result = st.session_state.get("result")
+    if result:
+        render_transaction_result(result, "scenario")
 
-        st.markdown("<div class='section-spacer'></div>", unsafe_allow_html=True)
-        col_user, col_tx, col_decision = st.columns([1.15, 1.15, 1])
-        with col_user:
-            render_user_intent(intent)
-        with col_tx:
-            render_proposed_transaction(tx)
-        with col_decision:
-            render_policy_decision(decision)
 
-        render_human_review(tx, decision)
-        render_payment_flow(tx, decision)
+def render_current_risk_page():
+    render_page_header("Current Risk", "Latest security evaluation")
+    result = latest_evaluation_result()
+    if not result:
+        st.markdown("<div class='card'><div class='meta-label'>CURRENT RISK</div><div class='decision-text'>AWAITING DECISION</div><div class='meta-value muted'>Run an AI Buyer evaluation or demo scenario to calculate risk.</div></div>", unsafe_allow_html=True)
+        return
+    decision = result.get("policy_decision", result)
+    decision_name = str(decision.get("decision", "")).upper() if isinstance(decision, dict) else ""
+    risk_score = decision.get("risk_score") if isinstance(decision, dict) else None
+    label = risk_label_for_result(result)
+    st.markdown(
+        f"""
+        <div class='card'>
+            <div class='meta-label'>CURRENT RISK</div>
+            <div class='decision-text' style='color:var(--{'green' if decision_name == 'ALLOW' else 'red' if decision_name == 'BLOCK' else 'amber' if decision_name == 'ASK' else 'text'});'>{label}</div>
+            <div class='meta-value'><strong>Risk Score:</strong> {risk_score if risk_score is not None else 'Not available'}</div>
+            <div class='meta-value'><strong>Decision:</strong> {decision_name or 'Not available'}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    render_transaction_result(result, "current_risk")
+
+
+def render_policy_page():
+    render_page_header("Policy Enforcement", "Deterministic controls that authorize AI-proposed transactions")
+    st.markdown(
+        """
+        <div class='card'>
+            <h3>🛡️ Policy Enforcement</h3>
+            <div class='status-pill'><span class='dot'></span>ON</div>
+            <div class='meta-value'>All transactions are monitored and evaluated against the user's authorization before payment.</div>
+            <div class='meta-label'>Controls</div>
+            <div class='meta-value'>Maximum amount · category · color · size · subscription · add-on · daily/session limits · aggregate/split detection</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_dashboard_page():
+    render_page_header()
+    render_ai_buyer_section()
+    render_ask_demo()
+
+
+current_page = render_sidebar_navigation()
+
+if current_page == "Dashboard Status":
+    render_dashboard_page()
+elif current_page == "Policy Enforcement":
+    render_policy_page()
+elif current_page == "Current Risk":
+    render_current_risk_page()
+elif current_page == "Audit Trail":
+    render_page_header("Audit Trail", "Recent transaction history and audit records")
+    render_audit_trail(audit_records())
+elif current_page == "Demo / Testing":
+    render_page_header("Demo / Testing", "Run predefined security scenarios")
+    render_demo_scenarios()
 
 st.markdown(
     "<div class='footer-note'>"

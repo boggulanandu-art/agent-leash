@@ -48,6 +48,108 @@ class TestAuditTrail(unittest.TestCase):
         self.assertEqual([record["transaction_id"] for record in records], ["ask-1", "block-1", "allow-1"])
         self.assertEqual([record["decision"] for record in records], ["ASK", "BLOCK", "ALLOW"])
 
+    def test_same_logical_evaluation_is_recorded_once(self):
+        first = self.database.log_decision(
+            transaction_id="tx-first",
+            user_id="audit-user",
+            decision="ASK",
+            reason="review required",
+            risk_score=45,
+            total_amount=2799,
+            currency="INR",
+            idempotency_key="request-1",
+        )
+        second = self.database.log_decision(
+            transaction_id="tx-retry",
+            user_id="audit-user",
+            decision="ASK",
+            reason="review required",
+            risk_score=45,
+            total_amount=2799,
+            currency="INR",
+            idempotency_key="request-1",
+        )
+
+        self.assertEqual(second["id"], first["id"])
+        self.assertEqual(len(self.client.get("/audit").json()), 1)
+        self.assertEqual(self.client.get("/audit").json()[0]["transaction_id"], "tx-first")
+
+    def test_distinct_logical_evaluations_remain_separate(self):
+        self.record_decision("tx-1", "ALLOW")
+        self.database.log_decision(
+            transaction_id="tx-2",
+            user_id="audit-user",
+            decision="ALLOW",
+            reason="ALLOW policy reason",
+            risk_score=10,
+            total_amount=2799,
+            currency="INR",
+            idempotency_key="request-2",
+        )
+
+        records = self.client.get("/audit").json()
+
+        self.assertEqual(len(records), 2)
+        self.assertEqual({record["transaction_id"] for record in records}, {"tx-1", "tx-2"})
+
+    def test_duplicate_transaction_ids_do_not_mix_review_or_payment_state(self):
+        self.record_decision("same-tx", "ALLOW")
+        self.record_decision("same-tx", "ALLOW")
+        self.database.record_approval(
+            transaction_id="same-tx",
+            original_decision="ASK",
+            human_decision="REJECT",
+            reviewer="reviewer-1",
+        )
+        self.database.save_razorpay_order(
+            transaction_id="same-tx",
+            razorpay_order_id="order-ambiguous",
+            amount=279900,
+            currency="INR",
+            status="created",
+        )
+
+        records = self.client.get("/audit").json()
+
+        self.assertEqual(len(records), 2)
+        self.assertTrue(all(record["decision"] == "ALLOW" for record in records))
+        self.assertTrue(all(record["human_decision"] is None for record in records))
+        self.assertTrue(all(record["payment_status"] is None for record in records))
+
+    def test_allow_row_does_not_inherit_legacy_ask_rejection_or_order(self):
+        self.record_decision("legacy-tx", "ALLOW")
+        self.database.log_decision(
+            transaction_id="legacy-tx",
+            user_id="audit-user",
+            decision="ASK",
+            reason="review required",
+            risk_score=45,
+            total_amount=2799,
+            currency="INR",
+        )
+        self.database.record_approval(
+            transaction_id="legacy-tx",
+            original_decision="ASK",
+            human_decision="REJECT",
+            reviewer="reviewer-legacy",
+        )
+        self.database.save_razorpay_order(
+            transaction_id="legacy-tx",
+            razorpay_order_id="order-legacy",
+            amount=279900,
+            currency="INR",
+            status="created",
+        )
+
+        records = self.client.get("/audit").json()
+
+        allow_record = next(record for record in records if record["decision"] == "ALLOW")
+        ask_record = next(record for record in records if record["decision"] == "ASK")
+        self.assertIsNone(allow_record["human_decision"])
+        self.assertIsNone(allow_record["payment_status"])
+        self.assertIsNone(ask_record["human_decision"])
+        self.assertIsNone(ask_record["payment_status"])
+
     def test_approval_and_payment_information_is_joined(self):
         self.record_decision("ask-approved", "ASK")
         self.database.record_approval(

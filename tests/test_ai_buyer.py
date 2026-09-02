@@ -105,6 +105,18 @@ class TestAIBuyer(unittest.TestCase):
         self.assertEqual(transaction.items[0].product_name, "Black Running Shoes")
         self.assertEqual(transaction.items[0].unit_price, 2799)
 
+    def test_quota_exhaustion_is_reported_cleanly(self):
+        buyer, _ = self.buyer_for(error=RuntimeError("429 ResourceExhausted: quota exhausted"))
+
+        with self.assertRaisesRegex(ValueError, "quota temporarily unavailable"):
+            buyer.propose_transaction(self.intent, self.catalog)
+
+    def test_generic_api_failure_is_reported_cleanly(self):
+        buyer, _ = self.buyer_for(error=RuntimeError("network timeout"))
+
+        with self.assertRaisesRegex(ValueError, "Please try again later"):
+            buyer.propose_transaction(self.intent, self.catalog)
+
     def test_blue_backpack_request_selects_blue_backpack(self):
         intent = UserIntent(
             instruction="Buy a blue backpack under ₹2000.",

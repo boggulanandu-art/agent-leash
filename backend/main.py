@@ -129,7 +129,7 @@ def evaluate_transaction(user_intent: UserIntent, transaction: ProposedTransacti
 def parse_intent(instruction: str) -> UserIntent:
     global parser
     if parser is None:
-        api_key = os.getenv("GEMINI_API_KEY")
+        api_key = os.getenv("OPENROUTER_API_KEY")
         parser = AIParser(api_key=api_key)
     return parser.parse(instruction)
 
@@ -143,14 +143,14 @@ def agent_buy(payload: AgentBuyRequest) -> dict:
     global parser, ai_buyer
     try:
         if parser is None:
-            parser = AIParser(api_key=os.getenv("GEMINI_API_KEY"))
+            parser = AIParser(api_key=os.getenv("OPENROUTER_API_KEY"))
         user_intent = parser.parse(payload.instruction)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Intent parsing failed: {exc}") from exc
 
     try:
         if ai_buyer is None:
-            ai_buyer = AIBuyer(api_key=os.getenv("GEMINI_API_KEY"))
+            ai_buyer = AIBuyer(api_key=os.getenv("OPENROUTER_API_KEY"))
         proposal = ai_buyer.propose_transaction(user_intent, AI_BUYER_CATALOG)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"AI Buyer failed: {exc}") from exc
@@ -388,7 +388,7 @@ def demo_ask_evaluation() -> dict:
     )
     global ai_buyer
     if ai_buyer is None:
-        ai_buyer = AIBuyer(api_key=os.getenv("GEMINI_API_KEY"))
+        ai_buyer = AIBuyer(api_key=os.getenv("OPENROUTER_API_KEY"))
     proposed_transaction = ai_buyer.propose_transaction(user_intent, [AI_BUYER_CATALOG[0]])
     decision = policy_engine.evaluate(user_intent, proposed_transaction)
     proposed_transaction.transaction_id = decision.transaction_id
