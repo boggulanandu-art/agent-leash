@@ -573,18 +573,8 @@ def latest_evaluation_result():
 
 
 def render_status_band():
-    result = latest_evaluation_result() or {}
-    decision = result.get("policy_decision", result) if isinstance(result, dict) else {}
-    decision_name = str(decision.get("decision", "")).upper()
-
-    if decision_name == "ALLOW":
-        risk_label = "LOW RISK"
-    elif decision_name == "BLOCK":
-        risk_label = "HIGH RISK"
-    elif decision_name == "ASK":
-        risk_label = "REVIEW REQUIRED"
-    else:
-        risk_label = "AWAITING DECISION"
+    current_result = latest_evaluation_result()
+    risk_label = risk_label_for_result(current_result)
 
     st.sidebar.markdown(
         """
@@ -868,8 +858,11 @@ def render_ai_buyer_section():
                 )
                 st.session_state.ai_buyer_result = payload
                 st.session_state.latest_evaluation_result = payload
-            except requests.RequestException:
-                st.session_state.ai_buyer_result = {"error": "AI service temporarily unavailable. Please try again later."}
+                st.rerun()
+            except requests.RequestException as exc:
+                detail = getattr(getattr(exc, "response", None), "json", lambda: {})()
+                message = detail.get("detail") if isinstance(detail, dict) else None
+                st.session_state.ai_buyer_result = {"error": message or "AI service temporarily unavailable. Please try again later."}
 
     result = st.session_state.get("ai_buyer_result")
     if not result:
@@ -1028,14 +1021,8 @@ def render_page_header(title=None, subtitle=None):
 
 
 def render_sidebar_navigation():
-    result = latest_evaluation_result() or {}
-    decision = result.get("policy_decision", result) if isinstance(result, dict) else {}
-    decision_name = str(decision.get("decision", "")).upper() if isinstance(decision, dict) else ""
-    risk_label = {
-        "ALLOW": "LOW RISK",
-        "BLOCK": "HIGH RISK",
-        "ASK": "REVIEW REQUIRED",
-    }.get(decision_name, "AWAITING DECISION")
+    current_result = latest_evaluation_result()
+    risk_label = risk_label_for_result(current_result)
 
     st.sidebar.markdown(
         """
@@ -1112,12 +1099,27 @@ def render_ask_demo():
             )
             st.session_state.ask_demo_result = payload
             st.session_state.latest_evaluation_result = payload
+            st.rerun()
         except requests.RequestException as exc:
             st.session_state.ask_demo_result = {"error": f"ASK demo request failed: {exc}"}
 
     ask_demo_result = st.session_state.get("ask_demo_result")
     if ask_demo_result:
-        render_transaction_result(ask_demo_result, "ask_demo")
+        if "error" in ask_demo_result:
+            render_error(ask_demo_result["error"])
+        else:
+            ask_intent = ask_demo_result.get("user_intent", {})
+            ask_tx = ask_demo_result.get("proposed_transaction", {})
+            ask_decision = ask_demo_result.get("policy_decision", {})
+            ask_columns = st.columns([1.15, 1.15, 1])
+            with ask_columns[0]:
+                render_user_intent(ask_intent)
+            with ask_columns[1]:
+                render_proposed_transaction(ask_tx)
+            with ask_columns[2]:
+                render_policy_decision(ask_decision)
+            render_human_review(ask_tx, ask_decision)
+            render_payment_flow(ask_tx, ask_decision, "ask_demo")
 
 
 def get_scenario_list():
@@ -1160,12 +1162,27 @@ def render_demo_scenarios():
                     )
                     st.session_state.result = payload
                     st.session_state.latest_evaluation_result = payload
+                    st.rerun()
                 except requests.RequestException as exc:
                     st.session_state.result = {"error": f"API request failed: {exc}"}
 
     result = st.session_state.get("result")
     if result:
-        render_transaction_result(result, "scenario")
+        if "error" in result:
+            render_error(result["error"])
+        else:
+            intent = result.get("user_intent", {})
+            tx = result.get("proposed_transaction", {})
+            decision = result.get("policy_decision", {})
+            cols = st.columns([1.15, 1.15, 1])
+            with cols[0]:
+                render_user_intent(intent)
+            with cols[1]:
+                render_proposed_transaction(tx)
+            with cols[2]:
+                render_policy_decision(decision)
+            render_human_review(tx, decision)
+            render_payment_flow(tx, decision, "scenario")
 
 
 def render_current_risk_page():

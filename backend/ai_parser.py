@@ -17,6 +17,15 @@ _CANONICAL_CATEGORY_ALIASES = {
     "shoes": "footwear",
     "running shoe": "footwear",
     "running shoes": "footwear",
+    "sneaker": "footwear",
+    "sneakers": "footwear",
+    "headphone": "headphones",
+    "wireless headphone": "headphones",
+    "wireless headphones": "headphones",
+    "earphone": "headphones",
+    "earphones": "headphones",
+    "earbuds": "headphones",
+    "electronics": "electronics",
 }
 
 
@@ -31,11 +40,34 @@ def _canonicalize_categories(categories: list[str]) -> list[str]:
 
 
 def _as_strings(values: Any) -> list[str]:
-    """Convert AI-returned list values into strings safely."""
+    """Convert AI-returned list or scalar values into strings safely."""
+    if values is None:
+        return []
+    if isinstance(values, (str, int, float)):
+        return [str(values)]
     if not isinstance(values, list):
         return []
 
     return [str(value) for value in values]
+
+
+def _extract_json_text(text: str) -> str:
+    if not text:
+        return ""
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        lines = cleaned.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        cleaned = "\n".join(lines).strip()
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start != -1 and end != -1 and end >= start:
+        return cleaned[start : end + 1]
+    return cleaned
+
 
 
 class AIParser:
@@ -200,62 +232,72 @@ Return ONLY valid JSON.
 
 Rules:
 1. Extract product name, brand, color and size.
-2. Extract maximum price.
+2. Extract maximum price as max_amount.
 3. Detect currency. Use INR by default.
-4. Add product categories.
+4. Add product categories to categories and allowed_categories.
 5. Add specified colors to allowed_colors.
 6. Add specified sizes to allowed_sizes as STRINGS.
-7. Subscriptions are false unless explicitly allowed.
-8. Add-ons are false unless explicitly allowed.
+7. allow_subscription = true ONLY if the user explicitly says they AUTHORIZE or ALLOW subscriptions as a payment method. If the user REQUESTS a subscription but has not said they authorize it, set allow_subscription = false.
+8. allow_addons = true ONLY if the user explicitly says they AUTHORIZE or ALLOW add-ons. If the user REQUESTS an add-on but has not said they authorize it, set allow_addons = false.
 9. Use empty arrays for unknown list fields.
 10. Use null for unknown numeric fields.
 11. Always return every required field.
 12. allowed_sizes MUST contain strings, for example ["9"], never [9].
+13. For headphones/wireless headphones, use category "headphones" not "electronics".
 """
 
-        try:
-            if self.client is not None:
-                response = self.client.chat.completions.create(
-                    model="openrouter/free",
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": prompt,
-                        }
-                    ],
-                    response_format={
-                        "type": "json_object",
-                    },
-                )
-            else:
-                response = self.model.generate_content(
-                    prompt,
-                    generation_config={
-                        "response_mime_type": "application/json",
-                        "response_schema": schema,
-                    },
-                )
-
-        except Exception as e:
-            raise ValueError(self._safe_api_error(e)) from e
-
-        if self.client is not None:
+        response_text = None
+        for attempt in range(2):
             try:
-                response_text = response.choices[0].message.content
-            except (AttributeError, IndexError, TypeError):
-                response_text = None
-        else:
-            response_text = (
-                getattr(response, "text", None)
-                if response is not None
-                else None
-            )
+                if self.client is not None:
+                    response = self.client.chat.completions.create(
+                        model="openrouter/free",
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": "You are a shopping intent parser. Always extract constraints and respond with valid JSON.",
+                            },
+                            {
+                                "role": "user",
+                                "content": prompt,
+                            }
+                        ],
+                        response_format={
+                            "type": "json_object",
+                        },
+                    )
+                    try:
+                        response_text = response.choices[0].message.content
+                    except (AttributeError, IndexError, TypeError):
+                        response_text = None
+                else:
+                    response = self.model.generate_content(
+                        prompt,
+                        generation_config={
+                            "response_mime_type": "application/json",
+                            "response_schema": schema,
+                        },
+                    )
+                    response_text = getattr(response, "text", None) if response is not None else None
 
-        if not response_text:
+                if response_text and response_text.strip():
+                    ct = _extract_json_text(response_text)
+                    if ct and ct.startswith("{"):
+                        break
+                    if self.model is not None:
+                        break
+            except Exception as e:
+                if attempt == 1 or self.model is not None:
+                    raise ValueError(self._safe_api_error(e)) from e
+
+        if not response_text or not response_text.strip():
             raise ValueError("AI API returned empty response.")
 
+        clean_text = _extract_json_text(response_text)
+        if not clean_text:
+            raise ValueError("AI API returned empty response.")
         try:
-            parsed_data = json.loads(response_text)
+            parsed_data = json.loads(clean_text)
         except json.JSONDecodeError as e:
             raise ValueError(
                 f"Invalid JSON from AI API: {str(e)}"
@@ -263,6 +305,14 @@ Rules:
 
         if not isinstance(parsed_data, dict):
             raise ValueError("AI response must be a JSON object.")
+
+        if self.model is not None:
+            missing_required_fields = [key for key in schema["required"] if key not in parsed_data]
+            if missing_required_fields:
+                raise ValueError(
+                    "Failed to validate parsed intent: missing required field(s): "
+                    + ", ".join(missing_required_fields)
+                )
 
         defaults = {
             "product_name": None,
@@ -284,6 +334,19 @@ Rules:
             "review_threshold": None,
         }
 
+        # Check aliases that OpenRouter free models might produce
+        if "max_amount" not in parsed_data or parsed_data["max_amount"] is None:
+            if "max_price" in parsed_data and parsed_data["max_price"] is not None:
+                parsed_data["max_amount"] = parsed_data["max_price"]
+
+        if "allow_subscription" not in parsed_data or parsed_data["allow_subscription"] is None:
+            if "subscriptions" in parsed_data and parsed_data["subscriptions"] is not None:
+                parsed_data["allow_subscription"] = bool(parsed_data["subscriptions"])
+
+        if "allow_addons" not in parsed_data or parsed_data["allow_addons"] is None:
+            if "add_ons" in parsed_data and parsed_data["add_ons"] is not None:
+                parsed_data["allow_addons"] = bool(parsed_data["add_ons"])
+
         for key, default_value in defaults.items():
             if key not in parsed_data or parsed_data[key] is None:
                 parsed_data[key] = default_value
@@ -295,12 +358,21 @@ Rules:
         parsed_data["allowed_categories"] = _as_strings(
             parsed_data.get("allowed_categories", [])
         )
+        if not parsed_data["allowed_categories"] and parsed_data["categories"]:
+            parsed_data["allowed_categories"] = list(parsed_data["categories"])
+
         parsed_data["allowed_colors"] = _as_strings(
             parsed_data.get("allowed_colors", [])
         )
+        if not parsed_data["allowed_colors"] and parsed_data.get("color"):
+            parsed_data["allowed_colors"] = [str(parsed_data["color"])]
+
         parsed_data["allowed_sizes"] = _as_strings(
             parsed_data.get("allowed_sizes", [])
         )
+        if not parsed_data["allowed_sizes"] and parsed_data.get("size"):
+            parsed_data["allowed_sizes"] = [str(parsed_data["size"])]
+
         parsed_data["allowed_merchants"] = _as_strings(
             parsed_data.get("allowed_merchants", [])
         )

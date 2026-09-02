@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import uuid
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -58,7 +60,7 @@ AI_BUYER_CATALOG = [
         "unit_price": 2499,
         "currency": "INR",
         "merchant_id": "merchant-demo",
-        "category": "electronics",
+        "category": "headphones",
         "color": None,
         "size": None,
         "is_subscription": False,
@@ -98,6 +100,7 @@ class HealthResponse(BaseModel):
 
 class AgentBuyRequest(BaseModel):
     instruction: str
+    request_id: Optional[str] = None
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -146,14 +149,59 @@ def agent_buy(payload: AgentBuyRequest) -> dict:
             parser = AIParser(api_key=os.getenv("OPENROUTER_API_KEY"))
         user_intent = parser.parse(payload.instruction)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Intent parsing failed: {exc}") from exc
+        status_code = 503 if "quota" in str(exc).lower() else 502
+        raise HTTPException(status_code=status_code, detail=f"Intent parsing failed: {exc}") from exc
 
     try:
         if ai_buyer is None:
             ai_buyer = AIBuyer(api_key=os.getenv("OPENROUTER_API_KEY"))
         proposal = ai_buyer.propose_transaction(user_intent, AI_BUYER_CATALOG)
+        # Detect subscription/addon explicitly requested in instruction.
+        # The proposed catalog product always has is_subscription=False, is_addon=False.
+        # If the user instruction explicitly REQUESTS a subscription or add-on, we must
+        # flag it on the proposed item so the policy engine can correctly BLOCK it.
+        instruction_lower = payload.instruction.lower()
+
+        # Detect subscription/addon explicitly REQUESTED in the instruction.
+        # We use positive-request phrases only, so "no subscription" / "no add-ons"
+        # (negation) does NOT trigger this flag.
+        import re as _re
+
+        def _is_positively_requested(text: str, phrases: list[str]) -> bool:
+            """Return True if any phrase appears without a preceding negation word."""
+            negations = {"no", "not", "without", "don't", "dont", "never", "avoid", "exclude", "skip", "or"}
+            for phrase in phrases:
+                for m in _re.finditer(_re.escape(phrase), text):
+                    # Grab the four words immediately before the match
+                    before = text[:m.start()].split()[-4:]
+                    if not any(w.rstrip(",.!?;") in negations for w in before):
+                        return True
+            return False
+
+        # Positive subscription request phrases — unambiguously affirmative
+        sub_phrases = [
+            "subscribe me", "sign me up for", "add subscription", "add a subscription",
+            "monthly membership", "monthly premium", "premium membership", "recurring",
+            "membership plan", "monthly plan", "annual plan",
+        ]
+        # Positive add-on request phrases — unambiguously affirmative (no bare "add-on")
+        addon_phrases = [
+            "add warranty", "add a warranty", "add extended warranty", "extended warranty",
+            "protection plan", "extended care", "add addon", "include an add-on",
+            "add an add-on", "include a warranty",
+        ]
+
+        if _is_positively_requested(instruction_lower, sub_phrases):
+            for item in proposal.items:
+                item.is_subscription = True
+        if _is_positively_requested(instruction_lower, addon_phrases):
+            for item in proposal.items:
+                item.is_addon = True
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"AI Buyer failed: {exc}") from exc
+        status_code = 503 if "quota" in str(exc).lower() else 502
+        raise HTTPException(status_code=status_code, detail=f"AI Buyer failed: {exc}") from exc
+
+    proposal.transaction_id = payload.request_id or uuid.uuid4().hex[:16]
 
     try:
         decision = policy_engine.evaluate(user_intent, proposal)
@@ -169,6 +217,7 @@ def agent_buy(payload: AgentBuyRequest) -> dict:
         risk_score=decision.risk_score,
         total_amount=proposal.total_amount,
         currency=proposal.currency,
+        idempotency_key=payload.request_id,
     )
     return {
         "user_intent": user_intent.model_dump(mode="json"),
@@ -367,8 +416,12 @@ def demo_scenarios() -> list[dict]:
     return simulator.scenario_list()
 
 
+class DemoRequest(BaseModel):
+    request_id: Optional[str] = None
+
+
 @app.post("/demo/ask")
-def demo_ask_evaluation() -> dict:
+def demo_ask_evaluation(payload: Optional[DemoRequest] = None) -> dict:
     """Evaluate a valid demo purchase above its human-review threshold."""
     user_intent = UserIntent(
         instruction="Buy black running shoes, size 9, under ₹3000. Human confirmation required for this transaction.",
@@ -390,6 +443,9 @@ def demo_ask_evaluation() -> dict:
     if ai_buyer is None:
         ai_buyer = AIBuyer(api_key=os.getenv("OPENROUTER_API_KEY"))
     proposed_transaction = ai_buyer.propose_transaction(user_intent, [AI_BUYER_CATALOG[0]])
+    req_id = payload.request_id if payload else None
+    proposed_transaction.transaction_id = req_id or uuid.uuid4().hex[:16]
+
     decision = policy_engine.evaluate(user_intent, proposed_transaction)
     proposed_transaction.transaction_id = decision.transaction_id
     database.log_decision(
@@ -400,6 +456,7 @@ def demo_ask_evaluation() -> dict:
         risk_score=decision.risk_score,
         total_amount=proposed_transaction.total_amount,
         currency=proposed_transaction.currency,
+        idempotency_key=req_id,
     )
     return {
         "user_intent": user_intent.model_dump(mode="json"),
@@ -409,7 +466,7 @@ def demo_ask_evaluation() -> dict:
 
 
 @app.post("/demo/scenarios/{scenario_name}")
-def demo_scenario_evaluation(scenario_name: str) -> dict:
+def demo_scenario_evaluation(scenario_name: str, payload: Optional[DemoRequest] = None) -> dict:
     scenario = scenario_name.upper()
     if scenario not in simulator.SCENARIO_DESCRIPTIONS:
         raise HTTPException(status_code=404, detail=f"Unknown demo scenario: {scenario_name}")
@@ -418,6 +475,9 @@ def demo_scenario_evaluation(scenario_name: str) -> dict:
     proposed_transaction = simulator.generate_transaction(scenario)
     if scenario == "AGGREGATE_SPLIT":
         proposed_transaction = simulator.generate_transactions(scenario)[1]
+
+    req_id = payload.request_id if payload else None
+    proposed_transaction.transaction_id = req_id or uuid.uuid4().hex[:16]
 
     decision = policy_engine.evaluate(user_intent, proposed_transaction)
     proposed_transaction.transaction_id = decision.transaction_id
@@ -429,6 +489,7 @@ def demo_scenario_evaluation(scenario_name: str) -> dict:
         risk_score=decision.risk_score,
         total_amount=proposed_transaction.total_amount,
         currency=proposed_transaction.currency,
+        idempotency_key=req_id,
     )
     return {
         "user_intent": user_intent.model_dump(mode="json"),
