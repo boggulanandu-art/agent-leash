@@ -1,407 +1,459 @@
-# 🛡️ Agent Leash
-## Security Layer for AI-Powered Transactions
 
-Agent Leash is a merchant-side security layer for AI-agent commerce.
+🛡️ Agent Leash
+Security Layer for AI-Powered Transactions
+AI can propose. Agent Leash decides.
 
-AI agents can shop and make financial decisions on behalf of users. Agent Leash ensures that AI agents never act beyond the user's authorization.
+Agent Leash is an independent security and authorization layer for AI-powered commerce.
 
-> **AI interprets intent. Deterministic policy code authorizes money.**
+AI agents can understand natural-language instructions and propose purchases, but the AI should not be the final authority over money. Agent Leash converts user authorization into structured constraints, evaluates every proposed transaction with a deterministic policy engine, and enforces one of three outcomes:
 
----
+🟢 ALLOW · 🟡 ASK · 🔴 BLOCK
 
-## 🚀 Live Demo
+Only transactions that satisfy the required authorization can reach the Razorpay TEST MODE payment flow.
 
-**Dashboard:**
-https://agent-leash-dashboard.onrender.com
+🎥 Demo Video
+Watch the complete Agent Leash demonstration:
 
-**GitHub Repository:**
-https://github.com/boggulanandu-art/agent-leash
+YouTube: ▶️ Watch the Agent Leash Demo
+https://youtu.be/9O6ycQoXRDk
 
-**📊 Project Presentation:**
-[Download Agent Leash PPT](./AgentLeash.pptx)
+The demo covers:
 
----
+Natural-language user authorization
 
-## 🎯 The Problem
+AI intent parsing
 
-AI agents can increasingly purchase products and make financial decisions for users.
+AI Buyer proposal
 
-Natural-language instructions can be misunderstood, extended, or exploited. Without a policy layer, authorizing an AI agent can become a blank check.
+Deterministic policy evaluation
 
-**Common Risks**
+ALLOW / ASK / BLOCK decisions
 
-- Misread instructions
-- Unauthorized add-ons
-- Hidden subscriptions
-- Purchases exceeding spending limits
-- Split transactions used to bypass limits
+Human approval workflow
 
----
+Risk scoring
 
-## 💡 The Solution
+Audit trail
 
-Agent Leash creates a **deterministic boundary between AI intent and money**.
+Razorpay TEST MODE order flow
 
-```text
+Five security scenarios
+
+🎯 The Problem
+AI shopping agents can increasingly understand user requests and initiate transactions.
+
+This creates a new security risk: an AI agent may misunderstand an instruction, exceed a spending limit, or add something the user never authorized.
+
+For example:
+
+Buy black running shoes, size 9, under ₹3000. No extras.
+Without an independent policy layer, an AI agent could potentially:
+
+Misinterpret user instructions
+
+Exceed the authorized spending limit
+
+Add unauthorized products or warranties
+
+Add unwanted subscriptions
+
+Split transactions to bypass limits
+
+Agent Leash provides an independent authorization boundary between the AI agent and payment execution.
+
+💡 The Solution
+Agent Leash separates AI decision-making from financial authorization.
+
 User
-  ↓
+ ↓
 Natural-Language Authorization
-  ↓
-AI Intent Parser (Gemini)
-  ↓
-Structured Authorization
-  ↓
-AI Agent Proposal
-  ↓
+ ↓
+AI Intent Parser
+ ↓
+Structured UserIntent
+ ↓
+AI Buyer
+ ↓
+Proposed Transaction
+ ↓
 Agent Leash Policy Engine
-  ↓
-┌─────────┬─────────┬─────────┐
-│  ALLOW  │   ASK   │  BLOCK  │
-└─────────┴─────────┴─────────┘
-  ↓
-Human Approval (if ASK)
-  ↓
-Razorpay TEST MODE Order Flow
-```
+ ↓
+┌──────────┬──────────┬──────────┐
+│  ALLOW   │   ASK    │  BLOCK   │
+└────┬─────┴────┬─────┴────┬─────┘
+     │           │          │
+     │           ▼          │
+     │      Human Review    │
+     │           │          │
+     └─────┬─────┘          │
+           ▼                ▼
+   Razorpay TEST       No Payment
+       Order
+The AI proposes the transaction. The Policy Engine authorizes it.
 
-Every AI-proposed transaction is evaluated against structured constraints derived from the user's authorization.
+🔐 Policy Engine
+The Policy Engine is deterministic and independently evaluates every proposed transaction.
 
-### Decision Model
+It checks:
 
-| Decision | Meaning |
-|----------|---------|
-| 🟢 **ALLOW** | Transaction fully matches the user's authorization |
-| 🟡 **ASK** | Borderline case requiring explicit human review |
-| 🔴 **BLOCK** | Transaction violates policy and is stopped before payment |
+Maximum transaction amount
 
----
+Allowed categories
 
-## ✅ Implemented Features
+Merchant restrictions
 
-- FastAPI backend
-- Gemini-based AI intent parsing
-- Deterministic Policy Engine
-- AI transaction simulator
-- ALLOW / ASK / BLOCK decisions
-- Maximum amount validation
-- Allowed category validation
-- Merchant allow/block rules
-- Color and size matching
-- Subscription restriction
-- Add-on restriction
-- Daily spending limits
-- Session spending limits
-- Aggregate/split transaction detection
-- Fail-closed financial validation
-- Currency validation
-- Integer paise normalization
-- Streamlit security dashboard
-- Human approval workflow
-- SQLite audit and approval persistence
-- Five demo scenarios
-- Razorpay TEST MODE order creation
-- Automated testing
-- Live Render deployment
-- **Current test suite: 47 / 47 tests passing**
+Product attributes
 
----
+Color and size
 
-## 🧪 Demo Scenarios
+Subscription permission
 
-| Scenario | AI Behavior | Result |
-|----------|-------------|--------|
-| `SAFE_PURCHASE` | Authorized purchase within all constraints | 🟢 ALLOW |
-| `UNAUTHORIZED_ADDON` | AI adds an unauthorized warranty/accessory | 🔴 BLOCK |
-| `UNAUTHORIZED_SUBSCRIPTION` | AI adds an unauthorized recurring subscription | 🔴 BLOCK |
-| `OVER_LIMIT` | AI proposes a purchase above the maximum | 🔴 BLOCK |
-| `AGGREGATE_SPLIT` | Transactions combine to exceed spending limits | 🔴 BLOCK |
+Add-on permission
 
----
+Daily and session spending limits
 
-## 🧾 Example Demo
+Aggregate transaction limits
 
-**User Authorization**
-> "Buy black running shoes, size 9, under ₹3000. No extras."
+Split-transaction detection
 
-**Safe AI Proposal**
+The AI cannot modify or override these security constraints.
 
-```
-Black Running Shoes   ₹2,799
-Category: Footwear
+Decision Model
+🟢 ALLOW — The transaction satisfies the user's authorization and can proceed.
+
+🟡 ASK — The transaction pauses for explicit human review.
+
+🔴 BLOCK — The transaction violates a mandatory policy and payment execution is prevented.
+
+🛒 Example User Authorization
+Buy black running shoes, size 9, under ₹3000. No extras.
+Agent Leash extracts:
+
+Category: footwear
+Color: black
+Size: 9
+Maximum Amount: ₹3000
+Add-ons: Not Allowed
+Subscriptions: Not Allowed
+✅ Example: Safe Purchase
+AI Buyer Proposal
+Product: Black Running Shoes
+Price: ₹2799
 Color: Black
 Size: 9
-```
+Category: Footwear
+Policy Evaluation
+Price ₹2799 ≤ User Limit ₹3000     ✓
+Category matches                    ✓
+Color matches                       ✓
+Size matches                        ✓
+No unauthorized add-ons             ✓
+No unauthorized subscription        ✓
+Result
+Decision: ALLOW
+Risk Score: 10
+Violations: None
+The transaction can proceed to the Razorpay TEST order flow.
 
-**Result:** 🟢 ALLOW
-**Risk Score:** 10
-**Violated Rules:** None
+🚨 Example: Unauthorized Add-on
+Black Running Shoes       ₹2,799
+Extended Warranty           ₹499
+--------------------------------
+Total                     ₹3,298
 
-**Unauthorized Add-on Proposal**
+User Maximum              ₹3,000
+Agent Leash detects:
 
-```
-Shoes                 ₹2,799
-Extended Warranty       ₹499
-Total                  ₹3,298
-User Maximum           ₹3,000
-```
+❌ Maximum amount exceeded
+❌ Unauthorized category
+❌ Unauthorized add-on
+Result
+Decision: BLOCK
+Risk Score: 90
+No Razorpay order is created for the blocked transaction.
 
-**Result:** 🔴 BLOCK
-**Risk Score:** 90
+🙋 Human-in-the-Loop
+Transactions requiring additional review follow:
 
-**Violations**
-- Maximum amount exceeded
-- Unauthorized category
-- Unauthorized add-on
-
----
-
-## 🙋 Human-in-the-Loop
-
-For borderline transactions:
-
-```
 ASK
  ↓
 Human Review
  ↓
-APPROVE or REJECT
+APPROVE / REJECT
  ↓
 SQLite Audit Record
-```
+An ASK decision is never silently converted into ALLOW. An explicit human decision is required before the transaction can proceed.
 
-An ASK decision is never silently converted to ALLOW.
-An explicit human decision is required before the transaction can proceed.
+💳 Razorpay TEST MODE
+Agent Leash integrates with Razorpay in TEST MODE.
 
----
+ALLOW → Razorpay TEST Order
 
-## 💳 Razorpay TEST MODE
+ASK → Human APPROVE → Razorpay TEST Order
 
-Razorpay integration is implemented for **TEST MODE**.
+ASK → Human REJECT → No Order
 
-**Payment Flow**
+BLOCK → No Razorpay Order
+No real payments are processed.
 
-```
-ALLOW
-  ↓
-Razorpay TEST Order
+🧪 Demo Scenarios
+Scenario	Expected Result	Purpose
+SAFE_PURCHASE	🟢 ALLOW	Valid purchase within authorization
+UNAUTHORIZED_ADDON	🔴 BLOCK	Unauthorized warranty/add-on
+UNAUTHORIZED_SUBSCRIPTION	🔴 BLOCK	Unauthorized subscription
+OVER_LIMIT	🔴 BLOCK	Spending-limit violation
+AGGREGATE_SPLIT	🔴 BLOCK	Split transactions exceeding limits
+Available through:
 
-ASK
-  ↓
-Human APPROVE
-  ↓
-Razorpay TEST Order
+GET /demo/scenarios
+📊 Risk Scoring & Audit Trail
+Agent Leash provides a risk score alongside the policy decision and stores transaction/approval information in SQLite.
 
-ASK
-  ↓
-Human REJECT
-  ↓
-No Order
+The audit trail records:
 
-BLOCK
-  ↓
-No Razorpay Order
-```
+User request
 
-The project does not process real payments. Razorpay is used only in TEST MODE for demonstration.
+Proposed transaction
 
----
+Policy decision
 
-## 🛡️ Security by Design
+Risk score
 
-**Deterministic Policy Enforcement**
-The same input produces the same policy decision.
+Violated rules
 
-**Explainable Decisions**
-Every decision includes the rules and reasons behind it.
+Human approval/rejection
 
-**Fail-Closed Behavior**
-Invalid financial values are rejected rather than guessed.
+Transaction state
 
-**Human Approval**
-Borderline transactions wait for explicit human confirmation.
+🤖 AI Layer
+Agent Leash currently uses OpenRouter for AI-powered intent parsing and AI Buyer functionality.
 
-**No Payment for Blocked Transactions**
-A BLOCK decision prevents Razorpay order creation.
+AI Provider: OpenRouter
+Model: openrouter/free
+Client: OpenAI-compatible API
+The AI understands the request and proposes a transaction. It does not decide whether money is authorized.
 
-**Auditability**
-Policy decisions and human approvals are persisted in SQLite.
+Natural Language
+       ↓
+   OpenRouter
+       ↓
+Structured Intent
+       ↓
+   AI Proposal
+       ↓
+Deterministic Policy Engine
+       ↓
+ALLOW / ASK / BLOCK
+🖥️ Dashboard
+The Streamlit dashboard provides:
 
----
+Current security status
 
-## 🧰 Technology Stack
+Policy enforcement
 
-| Layer | Technology |
-|-------|------------|
-| Frontend | Streamlit |
-| Backend | FastAPI |
-| Language | Python |
-| AI | Gemini |
-| Validation | Pydantic |
-| Database | SQLite |
-| Payments | Razorpay TEST MODE |
-| Testing | Python `unittest` |
-| Deployment | Render |
+Current risk
 
----
+AI Buyer proposals
 
-## 🧪 Testing
+ALLOW / ASK / BLOCK decisions
 
-The project includes an automated test suite covering:
+Human approval workflow
 
-- Policy engine
-- AI parser
-- Agent simulator
-- Approval workflow
-- Razorpay integration
+Demo scenarios
 
-**47 / 47 automated tests passing**
+Audit trail
 
----
+Razorpay TEST transaction status
 
-## 📁 Project Structure
+🛡️ Security by Design
+Deterministic enforcement — explicit policy rules control authorization.
 
-```
+Explainable decisions — decisions include reasons and violated rules.
+
+Fail-closed behavior — invalid financial values are rejected rather than guessed.
+
+Human approval — transactions requiring review wait for explicit action.
+
+No payment for BLOCKED transactions — blocked transactions cannot create Razorpay orders.
+
+Auditability — decisions and approvals are persisted in SQLite.
+
+Separation of responsibilities — AI proposes, policy authorizes, payment executes.
+
+🧰 Technology Stack
+Layer	Technology
+Frontend	Streamlit
+Backend	FastAPI
+Language	Python
+AI Provider	OpenRouter
+AI Model	openrouter/free
+Data Validation	Pydantic
+Database	SQLite
+Payments	Razorpay TEST MODE
+Testing	pytest
+📁 Project Structure
 agent-leash/
-│
 ├── backend/
 │   ├── __init__.py
 │   ├── agent_simulator.py
 │   ├── ai_parser.py
+│   ├── ai_buyer.py
 │   ├── database.py
 │   ├── main.py
 │   ├── models.py
 │   ├── policy_engine.py
 │   └── razorpay_service.py
-│
 ├── frontend/
 │   └── app.py
-│
 ├── tests/
 │   ├── __init__.py
 │   ├── test_agent_simulator.py
 │   ├── test_ai_parser.py
+│   ├── test_ai_buyer.py
 │   ├── test_approval_flow.py
+│   ├── test_ask_demo.py
+│   ├── test_ask_presentation.py
+│   ├── test_audit_trail.py
 │   ├── test_policy_engine.py
 │   └── test_razorpay_integration.py
-│
 ├── AgentLeash.pptx
 ├── requirements.txt
 ├── README.md
 └── .gitignore
-```
-
----
-
-## 💻 Local Setup
-
-**1. Clone the repository**
-
-```bash
+💻 Local Setup
+1. Clone
 git clone https://github.com/boggulanandu-art/agent-leash.git
 cd agent-leash
-```
-
-**2. Create a virtual environment**
-
-```bash
+2. Create virtual environment
 python -m venv .venv
-```
-
-**3. Activate the environment**
-
+3. Activate
 Windows:
-```bash
+
 .venv\Scripts\activate
-```
+macOS / Linux:
 
-macOS/Linux:
-```bash
 source .venv/bin/activate
-```
-
-**4. Install dependencies**
-
-```bash
+4. Install dependencies
 pip install -r requirements.txt
-```
+🔑 Environment Variables
+Create .env in the project root:
 
-**5. Start the Backend**
+OPENROUTER_API_KEY=your_openrouter_api_key
 
-```bash
+RAZORPAY_KEY_ID=your_razorpay_test_key_id
+RAZORPAY_KEY_SECRET=your_razorpay_test_key_secret
+Use Razorpay TEST MODE credentials only.
+
+Never commit API keys or secrets to GitHub.
+
+▶️ Run Locally
+Backend
 uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
-```
+Backend:
 
-**6. Start the Dashboard**
+http://127.0.0.1:8000
+Dashboard
+Open a second terminal:
 
-```bash
 streamlit run frontend/app.py --server.port 8501
-```
+Dashboard:
 
----
+http://localhost:8501
+🔌 API Endpoints
+Method	Endpoint	Purpose
+GET	/health	Backend health check
+POST	/parse-intent	Parse natural-language authorization
+POST	/agent/buy	Run AI Buyer + policy evaluation
+POST	/approval	Record human approval/rejection
+POST	/transactions/{transaction_id}/order	Create Razorpay TEST order after authorization
+GET	/demo/scenarios	Get deterministic demo scenarios
+🧪 Testing
+Run:
 
-## 🔑 Environment Variables
+pytest -q
+The test suite covers:
 
-**Never commit API keys or secrets to GitHub.**
+Policy Engine
 
-Use environment variables for:
+AI Parser
 
-```
-GEMINI_API_KEY
-RAZORPAY_KEY_ID
-RAZORPAY_KEY_SECRET
-```
+AI Buyer
 
-Razorpay credentials used for the demo must be **TEST MODE** credentials.
+Agent Simulator
 
----
+Approval workflow
 
-## 📌 Current Status
+ASK workflow
 
-**Completed**
+Audit trail
 
-- ✅ Deterministic policy engine
-- ✅ AI intent parsing
-- ✅ Five demo scenarios
-- ✅ Streamlit dashboard
-- ✅ Human approval workflow
-- ✅ SQLite audit persistence
-- ✅ Razorpay TEST MODE order flow
-- ✅ 47 / 47 automated tests passing
-- ✅ GitHub repository
-- ✅ Live Render deployment
-- ✅ Hackathon presentation
+Razorpay integration
 
-**Future Improvements**
+📌 Project Status
+Completed
+✅ Deterministic Policy Engine
 
-- Production payment integrations
-- Stronger audit and analytics UI
-- More AI-agent integrations
-- Additional policy controls
-- Production-grade security hardening
+✅ AI intent parsing
 
----
+✅ OpenRouter AI Buyer
 
-## 📊 Project Presentation
+✅ ALLOW / ASK / BLOCK decisions
 
-The final hackathon presentation is included in the repository:
+✅ Risk scoring
 
-📥 [Download Agent Leash Presentation](./AgentLeash.pptx)
+✅ Five demo scenarios
 
----
+✅ Human approval workflow
 
-## ⚠️ Disclaimer
+✅ SQLite audit persistence
 
-This project was developed as a hackathon prototype.
+✅ Razorpay TEST MODE order flow
 
-Razorpay integration is **TEST MODE only** and no real payments are processed.
+✅ Streamlit dashboard
 
-Do not use this codebase in production without a full security and compliance review.
+✅ Automated test suite
 
----
-🏆 Hackathon Project
+✅ Demo presentation
 
-"AI can act fast. Agent Leash makes sure it acts within the user's authority."
+✅ Demo video
 
-## 🏆 Hackathon Project
+Future Improvements
+Production payment integrations
 
-> "AI can act fast. Agent Leash makes sure it acts within the user's authority."
+Stronger audit and analytics UI
+
+Additional AI-agent integrations
+
+More advanced policy controls
+
+Production-grade security hardening
+
+🏆 Razorpay Buildathon
+Agent Leash is a hackathon prototype focused on making AI-powered commerce safer through explicit user authorization and independent policy enforcement.
+
+AI can act fast. Agent Leash makes sure it acts within the user's authority.
+
+⚠️ Disclaimer
+Agent Leash is a hackathon prototype.
+
+Razorpay integration uses TEST MODE only and does not process real payments.
+
+Do not use this codebase in production without a complete security, compliance, privacy, and payment-integration review.
+
+👩‍💻 Author
+Nandini Boggula
+
+GitHub: https://github.com/boggulanandu-art/agent-leash
+
+⭐ Core Philosophy
+        AI can propose
+              ↓
+       Agent Leash checks
+              ↓
+    ┌─────────┼─────────┐
+    ↓         ↓         ↓
+  ALLOW      ASK      BLOCK
+    ↓         ↓         ↓
+ Payment   Human     No Payment
+           Review
+AI can propose. Agent Leash decides.
